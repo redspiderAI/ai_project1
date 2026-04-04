@@ -3,7 +3,6 @@
     <section class="page-section">
       <div class="page-head">
         <h1 class="page-title">AI预测报货数量</h1>
-        <button type="button" class="btn btn-outline-secondary btn-sm" @click="onLogout">退出登录</button>
       </div>
       <div class="card shadow-sm">
         <div class="card-header bg-white fw-bold">
@@ -87,15 +86,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { getApiBase } from '@/api/config'
-import { fetchWithAuth } from '@/api/userApi'
-import { useAuth } from '@/api/useAuth'
-
-const auth = useAuth()
-auth.requireLogin()
-
-async function onLogout() {
-  await auth.logout()
-}
+import { fetchJson } from '@/api/userApi'
 
 const API_BASE = getApiBase()
 const PURCHASE_QUANTITY_QUERY_URL = `${API_BASE}/allocation/purchase-quantity/query`
@@ -246,13 +237,11 @@ async function queryTableData() {
       contract_no: filters.value.contractNo.trim(),
       smelter: filters.value.smelter.trim(),
     }
-    const result = await fetchWithAuth(PURCHASE_QUANTITY_QUERY_URL, {
+    const { res, data: body } = await fetchJson(PURCHASE_QUANTITY_QUERY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json; charset=utf-8' },
       body: JSON.stringify(payload),
     })
-    if (result._tokenExpired) return
-    const { res, data: body } = result
     const b = body as {
       success?: boolean
       message?: string
@@ -305,12 +294,7 @@ function resetFilters() {
 }
 
 .page-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   margin-bottom: 16px;
-  flex-wrap: wrap;
 }
 
 .page-title {
