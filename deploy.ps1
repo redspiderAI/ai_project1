@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-  部署 ai_pred 到服务器上的 Nginx 静态目录（默认与 /ai-pred/ 子路径部署一致）。
+  部署 ai_pred 到服务器上的 Nginx 静态目录（与 vite base 一致，当前为 /project2/）。
 
   用法（在项目根目录执行）:
     .\deploy.ps1
@@ -10,7 +10,7 @@
   环境变量（可选）:
     DEPLOY_HOST     服务器地址，默认 111.229.25.160
     DEPLOY_USER     SSH 用户，默认 ubuntu
-    DEPLOY_PATH     远端 dist 目录，默认 /home/project2/dist
+    DEPLOY_PATH     远端目录，默认 /home/project2/dist（与 Nginx alias 一致）
     VITE_API_BASE   若接口非同源，构建前设置，例如 http://111.229.25.160:8001/api/v1
 
   依赖: 本机已安装 Node.js、npm；已配置好 SSH 密钥登录远端，且本机有 scp 命令（Windows 10+ 自带 OpenSSH 客户端）。

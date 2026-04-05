@@ -11,8 +11,8 @@ export default defineConfig(({ mode }) => {
   const apiTarget = env.VITE_API_TARGET || DEFAULT_API_ORIGIN
 
   return {
-    // 部署在 http://<host>/ai-pred/ 子路径时需与服务器 location 一致
-    base: '/ai-pred/',
+    // 部署在 http://<host>/project2/ 子路径时需与服务器 location 一致（改部署路径时同步改此处）
+    base: '/project2/',
     plugins: [vue()],
     resolve: {
       alias: {

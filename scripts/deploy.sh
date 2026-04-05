@@ -9,7 +9,7 @@
 # 环境变量:
 #   DEPLOY_HOST   默认 111.229.25.160
 #   DEPLOY_USER   默认 ubuntu
-#   DEPLOY_PATH   默认 /home/project2/dist
+#   DEPLOY_PATH   默认 /home/project2（dist 内文件直接上传到此目录）
 #   SKIP_BUILD=1  仅上传已有 dist，不执行 npm
 #
 set -euo pipefail
@@ -19,7 +19,7 @@ cd "$ROOT"
 
 DEPLOY_HOST="${DEPLOY_HOST:-111.229.25.160}"
 DEPLOY_USER="${DEPLOY_USER:-ubuntu}"
-DEPLOY_PATH="${DEPLOY_PATH:-/home/project2/dist}"
+DEPLOY_PATH="${DEPLOY_PATH:-/home/project2}"
 
 echo "==> 项目目录: $ROOT"
 echo "==> 目标: ${DEPLOY_USER}@${DEPLOY_HOST}:${DEPLOY_PATH}"
