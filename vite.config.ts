@@ -27,5 +27,13 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
+    preview: {
+      proxy: {
+        '/api/v1': {
+          target: apiTarget,
+          changeOrigin: true,
+        },
+      },
+    },
   }
 })

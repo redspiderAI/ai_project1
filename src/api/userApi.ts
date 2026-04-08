@@ -3,8 +3,10 @@ export async function fetchJson(
   url: string,
   options: RequestInit = {},
 ): Promise<{ res: Response; data: unknown }> {
+  // 跨域时不能用 credentials:'include' 且服务端仍返回 Allow-Origin:*，浏览器会拦截 POST。
+  // 无 Cookie/登录场景用 omit，与 * 或常规 CORS 兼容。
   const res = await fetch(url, {
-    credentials: 'include',
+    credentials: 'omit',
     ...options,
     headers: {
       ...(options.headers as Record<string, string> | undefined),
