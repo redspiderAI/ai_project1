@@ -202,7 +202,6 @@
             <button class="btn btn-primary" @click="handleQuery" :disabled="tableLoading">查询</button>
             <button class="btn btn-secondary" @click="handleReset">重置</button>
             <button class="btn btn-secondary" @click="exportFilteredData" :disabled="tableLoading">导出Excel</button>
-            <button class="btn btn-secondary" @click="testSelectedValues" style="background-color: #ff9800; color: white;">测试选中值</button>
           </div>
         </div>
       </div>
@@ -454,18 +453,6 @@ const closeErrorModal = () => {
   errorModalDetails.value = []
 }
 
-// ==================== 测试函数 ====================
-const testSelectedValues = () => {
-  console.log('=== 当前选中值测试 ===')
-  console.log('大区经理 selectedManagers:', JSON.parse(JSON.stringify(selectedManagers.value)))
-  console.log('仓库 selectedWarehouses:', JSON.parse(JSON.stringify(selectedWarehouses.value)))
-  console.log('品种 selectedVarieties:', JSON.parse(JSON.stringify(selectedVarieties.value)))
-  console.log('日期范围:', filters.value.startDate, '至', filters.value.endDate)
-  console.log('=====================')
-  
-  alert(`当前选中：\n大区经理：${selectedManagers.value.join(', ') || '无'}\n仓库：${selectedWarehouses.value.join(', ') || '无'}\n品种：${selectedVarieties.value.join(', ') || '无'}`)
-}
-
 // ==================== 大区经理逻辑 ====================
 const filterManagerOptions = () => {
   const search = managerSearchText.value.toLowerCase()
@@ -478,17 +465,9 @@ const filterManagerOptions = () => {
 }
 
 const addManager = (item: string) => {
-  console.log('=== addManager 被调用 ===')
-  console.log('添加的项:', item)
-  console.log('添加前 selectedManagers:', [...selectedManagers.value])
-  
   if (!selectedManagers.value.includes(item)) {
     selectedManagers.value.push(item)
-    console.log('添加后 selectedManagers:', [...selectedManagers.value])
-  } else {
-    console.log('该项已存在，不重复添加')
   }
-  
   managerSearchText.value = ''
   filterManagerOptions()
   managerDropdownVisible.value = false
@@ -630,41 +609,31 @@ const fetchData = async () => {
       page_size: pageSize.value
     }
     
-    // 送货日期范围
     if (filters.value.startDate) {
-      params.start_date = filters.value.startDate
+      params.date_from = filters.value.startDate
     }
     if (filters.value.endDate) {
-      params.end_date = filters.value.endDate
+      params.date_to = filters.value.endDate
     }
     
-    // 大区经理（多选）
     if (selectedManagers.value.length > 0) {
       params.regional_managers = selectedManagers.value
-      console.log('添加了 regional_managers 参数:', selectedManagers.value)
     }
     
-    // 仓库（多选）
     if (selectedWarehouses.value.length > 0) {
       params.warehouses = selectedWarehouses.value
     }
     
-    // 品种（多选）
     if (selectedVarieties.value.length > 0) {
       params.product_varieties = selectedVarieties.value
     }
     
-    console.log('请求参数:', params)
-    
     const response = await axios.get(`${API_BASE_URL}/api/v1/history`, { params })
     const data = response.data as ApiResponse
-    
-    console.log('后端返回数据:', data)
     
     if (data && data.items) {
       allData.value = data.items
       total.value = data.total
-      console.log('前端 allData 长度:', allData.value.length)
     } else {
       allData.value = []
       total.value = 0
