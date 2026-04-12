@@ -71,6 +71,40 @@
           </div>
         </div>
 
+        <!-- 冶炼厂多选 -->
+        <div class="filter-item multi-select-item">
+          <label>冶炼厂</label>
+          <div class="multi-select-container">
+            <div class="selected-tags" @click="focusSmelterInput">
+              <span v-for="item in selectedSmelters" :key="item" class="tag">
+                {{ item }}
+                <button type="button" class="tag-remove" @click.stop="removeSmelter(item)">×</button>
+              </span>
+              <input 
+                ref="smelterInputRef"
+                v-model="smelterSearchText"
+                type="text"
+                class="multi-input"
+                placeholder="搜索并选择"
+                @input="filterSmelterOptions"
+                @focus="smelterDropdownVisible = true"
+                @blur="closeSmelterDropdown"
+                @keydown.enter="handleSmelterKeydown"
+              />
+            </div>
+            <div v-show="smelterDropdownVisible && filteredSmelterOptions.length > 0" class="dropdown-list">
+              <div 
+                v-for="item in filteredSmelterOptions" 
+                :key="item"
+                class="dropdown-item"
+                @click="addSmelter(item)"
+              >
+                {{ item }}
+              </div>
+            </div>
+          </div>
+        </div>
+
         <!-- 品种多选 -->
         <div class="filter-item multi-select-item">
           <label>品种</label>
@@ -185,28 +219,30 @@
               <th>预测日期</th>
               <th>大区经理</th>
               <th>仓库</th>
+              <th>冶炼厂</th>
               <th>品种</th>
               <th>预测重量(吨)</th>
               <th width="80">查看</th>
             </tr>
           </thead>
-      <tbody>
+         <tbody>
   <tr v-for="row in paginatedData" :key="row.id">
     <td>{{ row.target_date }}</td>
     <td>{{ row.regional_manager || '-' }}</td>
     <td>{{ row.warehouse || '-' }}</td>
+    <td>{{ row.smelter || '-' }}</td>
     <td>{{ row.product_variety || '-' }}</td>
     <td>{{ parseFloat(row.predicted_weight).toFixed(2) }}</td>
     <td><button class="btn-view" @click="openDetailModal(row)">查看</button></td>
   </tr>
   <tr v-if="paginatedData.length === 0">
-    <td :colspan="6" class="empty-data">暂无数据</td>
+    <td :colspan="7" class="empty-data">暂无数据</td>
   </tr>
 </tbody>
-</table>
+        </table>
       </div>
 
-      <!-- 分页 -->
+      <!-- 分页 --> 
       <div class="pagination">
         <button @click="prevPage" :disabled="currentPage === 1">上一页</button>
         <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
@@ -231,6 +267,7 @@
             <p><strong>预测日期：</strong>{{ modalData?.target_date }}</p>
             <p><strong>大区经理：</strong>{{ modalData?.regional_manager }}</p>
             <p><strong>仓库：</strong>{{ modalData?.warehouse }}</p>
+            <p><strong>冶炼厂：</strong>{{ modalData?.smelter || '-' }}</p>
             <p><strong>品种：</strong>{{ modalData?.product_variety }}</p>
             <p><strong>预测重量：</strong>{{ parseFloat(modalData?.predicted_weight || '0').toFixed(2) }} 吨</p>
           </div>
@@ -277,6 +314,7 @@ interface PredictResult {
   target_date: string
   regional_manager: string
   warehouse: string
+  smelter?: string
   product_variety: string
   predicted_weight: string
 }
@@ -334,6 +372,14 @@ const warehouseDropdownVisible = ref(false)
 const warehouseInputRef = ref<HTMLInputElement>()
 const allWarehouseOptions = ref<string[]>([])
 const filteredWarehouseOptions = ref<string[]>([])
+
+// 冶炼厂多选
+const selectedSmelters = ref<string[]>([])
+const smelterSearchText = ref('')
+const smelterDropdownVisible = ref(false)
+const smelterInputRef = ref<HTMLInputElement>()
+const allSmelterOptions = ref<string[]>([])
+const filteredSmelterOptions = ref<string[]>([])
 
 // 品种多选
 const selectedVarieties = ref<string[]>([])
@@ -395,19 +441,22 @@ async function fetchOptions() {
     
     allManagerOptions.value = [...new Set(items.map((item: any) => item.regional_manager))].filter(Boolean)
     allWarehouseOptions.value = [...new Set(items.map((item: any) => item.warehouse))].filter(Boolean)
+    allSmelterOptions.value = [...new Set(items.map((item: any) => item.smelter))].filter(Boolean)
     allVarietyOptions.value = [...new Set(items.map((item: any) => item.product_variety))].filter(Boolean)
     
     filteredManagerOptions.value = [...allManagerOptions.value]
     filteredWarehouseOptions.value = [...allWarehouseOptions.value]
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
     filteredVarietyOptions.value = [...allVarietyOptions.value]
   } catch (error) {
     console.error('获取选项失败', error)
-    // 使用模拟数据作为后备
     allManagerOptions.value = ['张建国', '李明华', '王德发']
     allWarehouseOptions.value = ['北京仓库', '上海仓库', '广州仓库']
+    allSmelterOptions.value = ['金利', '豫光']
     allVarietyOptions.value = ['电解铜', '铝锭', '锌锭']
     filteredManagerOptions.value = [...allManagerOptions.value]
     filteredWarehouseOptions.value = [...allWarehouseOptions.value]
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
     filteredVarietyOptions.value = [...allVarietyOptions.value]
   }
 }
@@ -492,6 +541,46 @@ const focusWarehouseInput = () => {
   warehouseInputRef.value?.focus()
 }
 
+// ==================== 冶炼厂多选逻辑 ====================
+const filterSmelterOptions = () => {
+  const search = smelterSearchText.value.toLowerCase()
+  if (search) {
+    filteredSmelterOptions.value = allSmelterOptions.value.filter(opt => opt.toLowerCase().includes(search))
+  } else {
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
+  }
+  smelterDropdownVisible.value = filteredSmelterOptions.value.length > 0
+}
+
+const addSmelter = (item: string) => {
+  if (!selectedSmelters.value.includes(item)) {
+    selectedSmelters.value.push(item)
+  }
+  smelterSearchText.value = ''
+  filterSmelterOptions()
+}
+
+const removeSmelter = (item: string) => {
+  selectedSmelters.value = selectedSmelters.value.filter(i => i !== item)
+}
+
+const handleSmelterKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Enter' && smelterSearchText.value.trim()) {
+    addSmelter(smelterSearchText.value.trim())
+    e.preventDefault()
+  }
+}
+
+const closeSmelterDropdown = () => {
+  setTimeout(() => {
+    smelterDropdownVisible.value = false
+  }, 200)
+}
+
+const focusSmelterInput = () => {
+  smelterInputRef.value?.focus()
+}
+
 // ==================== 品种多选逻辑 ====================
 const filterVarietyOptions = () => {
   const search = varietySearchText.value.toLowerCase()
@@ -533,14 +622,40 @@ const focusVarietyInput = () => {
 }
 
 // ==================== 触发预测 ====================
-// ==================== 触发预测 ====================
 async function triggerPredict() {
   loading.value = true
   try {
     const items = []
     
-    // 如果有选中的仓库和品种
-    if (selectedWarehouses.value.length > 0 && selectedVarieties.value.length > 0) {
+    // 构建预测请求
+    if (selectedWarehouses.value.length > 0 && selectedSmelters.value.length > 0 && selectedVarieties.value.length > 0) {
+      for (const warehouse of selectedWarehouses.value) {
+        for (const smelter of selectedSmelters.value) {
+          for (const variety of selectedVarieties.value) {
+            items.push({
+              warehouse: warehouse,
+              smelter: smelter,
+              productVariety: variety,
+              horizon_days: 15,
+              prediction_start_date: filters.value.startDate,
+              use_cache: true
+            })
+          }
+        }
+      }
+    } else if (selectedWarehouses.value.length > 0 && selectedSmelters.value.length > 0) {
+      for (const warehouse of selectedWarehouses.value) {
+        for (const smelter of selectedSmelters.value) {
+          items.push({
+            warehouse: warehouse,
+            smelter: smelter,
+            horizon_days: 15,
+            prediction_start_date: filters.value.startDate,
+            use_cache: true
+          })
+        }
+      }
+    } else if (selectedWarehouses.value.length > 0 && selectedVarieties.value.length > 0) {
       for (const warehouse of selectedWarehouses.value) {
         for (const variety of selectedVarieties.value) {
           items.push({
@@ -552,9 +667,19 @@ async function triggerPredict() {
           })
         }
       }
-    } 
-    // 只有仓库
-    else if (selectedWarehouses.value.length > 0) {
+    } else if (selectedSmelters.value.length > 0 && selectedVarieties.value.length > 0) {
+      for (const smelter of selectedSmelters.value) {
+        for (const variety of selectedVarieties.value) {
+          items.push({
+            smelter: smelter,
+            productVariety: variety,
+            horizon_days: 15,
+            prediction_start_date: filters.value.startDate,
+            use_cache: true
+          })
+        }
+      }
+    } else if (selectedWarehouses.value.length > 0) {
       for (const warehouse of selectedWarehouses.value) {
         items.push({
           warehouse: warehouse,
@@ -563,9 +688,16 @@ async function triggerPredict() {
           use_cache: true
         })
       }
-    }
-    // 只有品种
-    else if (selectedVarieties.value.length > 0) {
+    } else if (selectedSmelters.value.length > 0) {
+      for (const smelter of selectedSmelters.value) {
+        items.push({
+          smelter: smelter,
+          horizon_days: 15,
+          prediction_start_date: filters.value.startDate,
+          use_cache: true
+        })
+      }
+    } else if (selectedVarieties.value.length > 0) {
       for (const variety of selectedVarieties.value) {
         items.push({
           productVariety: variety,
@@ -574,11 +706,10 @@ async function triggerPredict() {
           use_cache: true
         })
       }
-    }
-    // 没有选择时，使用默认值（修改这里！）
-    else {
+    } else {
       items.push({
         warehouse: '北京仓库',
+        smelter: '金利',
         productVariety: '电解铜',
         horizon_days: 15,
         prediction_start_date: filters.value.startDate,
@@ -616,6 +747,9 @@ async function fetchDetailData() {
     if (selectedWarehouses.value.length > 0) {
       params.warehouses = selectedWarehouses.value
     }
+    if (selectedSmelters.value.length > 0) {
+      params.smelters = selectedSmelters.value
+    }
     if (selectedVarieties.value.length > 0) {
       params.product_varieties = selectedVarieties.value
     }
@@ -649,9 +783,11 @@ function handleReset() {
   }
   selectedManagers.value = []
   selectedWarehouses.value = []
+  selectedSmelters.value = []
   selectedVarieties.value = []
   managerSearchText.value = ''
   warehouseSearchText.value = ''
+  smelterSearchText.value = ''
   varietySearchText.value = ''
   handleQuery()
 }
@@ -881,7 +1017,7 @@ function drawChart() {
 // ==================== 查看弹窗 ====================
 function openDetailModal(row: PredictResult) {
   modalData.value = row
-  modalTitle.value = `${row.target_date} - ${row.regional_manager} - ${row.warehouse} - ${row.product_variety} 预测明细`
+  modalTitle.value = `${row.target_date} - ${row.regional_manager} - ${row.warehouse} - ${row.smelter} - ${row.product_variety} 预测明细`
   modalVisible.value = true
 }
 
@@ -903,6 +1039,9 @@ async function exportExcel() {
     }
     if (selectedWarehouses.value.length > 0) {
       params.warehouses = selectedWarehouses.value
+    }
+    if (selectedSmelters.value.length > 0) {
+      params.smelters = selectedSmelters.value
     }
     if (selectedVarieties.value.length > 0) {
       params.product_varieties = selectedVarieties.value
@@ -1272,7 +1411,7 @@ onUnmounted(() => {
 .modal-content {
   background: white;
   border-radius: 8px;
-  width: 550px;
+  width: 600px;
   max-width: 90%;
   max-height: 80%;
   overflow: auto;
