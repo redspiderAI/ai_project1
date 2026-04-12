@@ -118,32 +118,30 @@
 
       <div class="card">
         <div class="result-label">
-          <span>有效合同明细（共 {{ managerTotal }} 条）</span>
-          <span class="unit-hint">表中数量为车数</span>
+          <span>有效合同明细（共 {{ managerTotal }} 条记录）</span>
+          <span class="unit-hint">表中数量为重量(吨)</span>
         </div>
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
                 <th width="40"><input type="checkbox" :checked="isManagerAllSelected" @change="toggleManagerSelectAll" /></th>
-                <th>送货日期</th>
                 <th>大区经理</th>
-                <th>仓库</th>
-                <th>品种</th>
-                <th>重量(吨)</th>
+                <th>冶炼厂</th>
+                <th v-for="date in managerDateColumns" :key="date">{{ date }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in managerPaginatedData" :key="row.id">
+              <tr v-for="(row, idx) in managerDisplayRows" :key="`m-${idx}`">
                 <td><input type="checkbox" v-model="managerSelectedRows" :value="row.id" /></td>
-                <td>{{ row.delivery_date }}</td>
-                <td>{{ row.regional_manager }}</td>
-                <td>{{ row.warehouse }}</td>
-                <td>{{ row.product_variety }}</td>
-                <td>{{ parseFloat(row.weight).toFixed(2) }}</td>
+                <td v-if="row.showManager" :rowspan="row.managerRowspan">{{ row.regional_manager }}</td>
+                <td>{{ row.smelter }}</td>
+                <td v-for="(cell, i) in row.cells" :key="i">
+                  <span :class="{ 'cell-dash': cell.isPlaceholder }">{{ cell.text }}</span>
+                </td>
               </tr>
-              <tr v-if="managerPaginatedData.length === 0">
-                <td :colspan="6" class="empty-data">暂无数据</td>
+              <tr v-if="managerDisplayRows.length === 0">
+                <td :colspan="3 + managerDateColumns.length" class="empty-data">暂无数据</td>
               </tr>
             </tbody>
           </table>
@@ -289,32 +287,32 @@
 
       <div class="card">
         <div class="result-label">
-          <span>有效合同明细（共 {{ warehouseTotal }} 条）</span>
-          <span class="unit-hint">表中数量为车数</span>
+          <span>有效合同明细（共 {{ warehouseTotal }} 条记录）</span>
+          <span class="unit-hint">表中数量为重量(吨)</span>
         </div>
         <div class="table-wrapper">
           <table class="data-table">
             <thead>
               <tr>
                 <th width="40"><input type="checkbox" :checked="isWarehouseAllSelected" @change="toggleWarehouseSelectAll" /></th>
-                <th>送货日期</th>
-                <th>大区经理</th>
                 <th>仓库</th>
-                <th>品种</th>
-                <th>重量(吨)</th>
+                <th>大区经理</th>
+                <th>冶炼厂</th>
+                <th v-for="date in warehouseDateColumns" :key="date">{{ date }}</th>
               </tr>
             </thead>
             <tbody>
-              <tr v-for="row in warehousePaginatedData" :key="row.id">
+              <tr v-for="(row, idx) in warehouseDisplayRows" :key="`w-${idx}`">
                 <td><input type="checkbox" v-model="warehouseSelectedRows" :value="row.id" /></td>
-                <td>{{ row.delivery_date }}</td>
+                <td v-if="row.showWarehouse" :rowspan="row.warehouseRowspan">{{ row.warehouse }}</td>
                 <td>{{ row.regional_manager }}</td>
-                <td>{{ row.warehouse }}</td>
-                <td>{{ row.product_variety }}</td>
-                <td>{{ parseFloat(row.weight).toFixed(2) }}</td>
+                <td>{{ row.smelter }}</td>
+                <td v-for="(cell, i) in row.cells" :key="i">
+                  <span :class="{ 'cell-dash': cell.isPlaceholder }">{{ cell.text }}</span>
+                </td>
               </tr>
-              <tr v-if="warehousePaginatedData.length === 0">
-                <td :colspan="6" class="empty-data">暂无数据</td>
+              <tr v-if="warehouseDisplayRows.length === 0">
+                <td :colspan="4 + warehouseDateColumns.length" class="empty-data">暂无数据</td>
               </tr>
             </tbody>
           </table>
@@ -364,21 +362,37 @@ import axios from 'axios'
 const API_BASE_URL = 'http://111.229.25.160:8001'
 
 // ==================== 类型定义 ====================
-interface HistoryRecord {
+interface RawRecord {
   id: number
   delivery_date: string
   regional_manager: string
   warehouse: string
-  product_variety: string
+  smelter?: string
   weight: string
-  created_at: string
 }
 
 interface ApiResponse {
-  items: HistoryRecord[]
+  items: RawRecord[]
   total: number
   page: number
   page_size: number
+}
+
+// 表格行数据（按大区经理查询）
+interface ManagerTableRow {
+  id: string
+  regional_manager: string
+  smelter: string
+  cells: { text: string; isPlaceholder: boolean }[]
+}
+
+// 表格行数据（按仓库查询）
+interface WarehouseTableRow {
+  id: string
+  warehouse: string
+  regional_manager: string
+  smelter: string
+  cells: { text: string; isPlaceholder: boolean }[]
 }
 
 // ==================== 通用状态 ====================
@@ -403,41 +417,51 @@ const closeErrorModal = () => {
   errorModalDetails.value = []
 }
 
-// 冶炼厂选项
-const allSmelterOptions = ['金利', '豫光']
-
 // ==================== 按大区经理查询 ====================
-const managerData = ref<HistoryRecord[]>([])
 const managerTotal = ref(0)
 const managerCurrentPage = ref(1)
 const managerPageSize = ref(10)
-const managerSelectedRows = ref<number[]>([])
+const managerSelectedRows = ref<string[]>([])
 
-// 大区经理多选
+// 日期列
+const managerDateColumns = ref<string[]>([])
+
+// 表格行数据
+const managerTableRows = ref<ManagerTableRow[]>([])
+const managerDisplayRows = ref<any[]>([])
+
+// 筛选条件
 const managerSelectedManagers = ref<string[]>([])
+const managerSelectedSmelters = ref<string[]>([])
+const managerFilters = ref({
+  startDate: '',
+  endDate: ''
+})
+
+// 下拉选项
 const managerSearchText = ref('')
 const managerDropdownVisible = ref(false)
 const managerInputRef = ref<HTMLInputElement>()
 const allManagerOptions = ref<string[]>([])
 const filteredManagerOptions = ref<string[]>([])
 
-// 冶炼厂多选
-const managerSelectedSmelters = ref<string[]>([])
 const smelterSearchText = ref('')
 const smelterDropdownVisible = ref(false)
 const smelterInputRef = ref<HTMLInputElement>()
+const allSmelterOptions = ref<string[]>([])
 const filteredSmelterOptions = ref<string[]>([])
 
-const managerFilters = ref({
-  startDate: '',
-  endDate: ''
+const managerTotalPages = computed(() => Math.max(1, Math.ceil(managerTableRows.value.length / managerPageSize.value)))
+const managerPaginatedRows = computed(() => {
+  const start = (managerCurrentPage.value - 1) * managerPageSize.value
+  return managerTableRows.value.slice(start, start + managerPageSize.value)
 })
 
-const managerTotalPages = computed(() => Math.max(1, Math.ceil(managerTotal.value / managerPageSize.value)))
-const managerPaginatedData = computed(() => managerData.value)
+// 生成带合并的显示行
+
 
 const isManagerAllSelected = computed(() => {
-  return managerPaginatedData.value.length > 0 && managerSelectedRows.value.length === managerPaginatedData.value.length
+  return managerPaginatedRows.value.length > 0 && managerSelectedRows.value.length === managerPaginatedRows.value.length
 })
 
 // 大区经理多选逻辑
@@ -484,9 +508,9 @@ const focusManagerInput = () => {
 const filterSmelterOptions = () => {
   const search = smelterSearchText.value.toLowerCase()
   if (search) {
-    filteredSmelterOptions.value = allSmelterOptions.filter(opt => opt.toLowerCase().includes(search))
+    filteredSmelterOptions.value = allSmelterOptions.value.filter(opt => opt.toLowerCase().includes(search))
   } else {
-    filteredSmelterOptions.value = [...allSmelterOptions]
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
   }
   smelterDropdownVisible.value = filteredSmelterOptions.value.length > 0
 }
@@ -520,26 +544,28 @@ const focusSmelterInput = () => {
   smelterInputRef.value?.focus()
 }
 
-// 查询按大区经理数据
+// 按大区经理查询
 async function queryManagerData() {
   loading.value = true
   try {
     const params: Record<string, any> = {
-      page: managerCurrentPage.value,
-      page_size: managerPageSize.value
+      page: 1,
+      page_size: 500
     }
     
     if (managerFilters.value.startDate) {
-      params.date_from = managerFilters.value.startDate
+      params.delivery_date_from = managerFilters.value.startDate
     }
     if (managerFilters.value.endDate) {
-      params.date_to = managerFilters.value.endDate
+      params.delivery_date_to = managerFilters.value.endDate
     }
     if (managerSelectedManagers.value.length > 0) {
-      params.regional_managers = managerSelectedManagers.value
+      // 注意：后端可能只支持单个，取第一个
+      params.regional_manager = managerSelectedManagers.value[0]
     }
     if (managerSelectedSmelters.value.length > 0) {
-      params.product_varieties = managerSelectedSmelters.value
+      // 注意：使用单数 smelter，不是 smelters
+      params.smelter = managerSelectedSmelters.value[0]
     }
     if (globalSearch.value) {
       params.global_search = globalSearch.value
@@ -548,18 +574,56 @@ async function queryManagerData() {
     console.log('请求参数:', params)
     
     const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
-    const data = response.data as ApiResponse
     
-    if (data && data.items) {
-      managerData.value = data.items
-      managerTotal.value = data.total
-      // 更新下拉选项
-      allManagerOptions.value = [...new Set(data.items.map(item => item.regional_manager))].filter(Boolean)
-      filteredManagerOptions.value = [...allManagerOptions.value]
-    } else {
-      managerData.value = []
-      managerTotal.value = 0
-    }
+    const data = response.data as ApiResponse
+    const items = data.items || []
+    
+    // 更新下拉选项
+    allManagerOptions.value = [...new Set(items.map((item: RawRecord) => item.regional_manager).filter(Boolean))]
+    allSmelterOptions.value = [...new Set(items.map((item: RawRecord) => item.smelter || '').filter(Boolean))]
+    filteredManagerOptions.value = [...allManagerOptions.value]
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
+    
+    // 获取所有日期
+    const dates = [...new Set(items.map(item => item.delivery_date))].sort()
+    managerDateColumns.value = dates
+    
+    // 按大区经理+冶炼厂分组汇总重量
+    const groupMap = new Map<string, Map<string, number>>()
+    items.forEach(item => {
+      const key = `${item.regional_manager}|${item.smelter || ''}`
+      if (!groupMap.has(key)) {
+        groupMap.set(key, new Map())
+      }
+      const dateMap = groupMap.get(key)!
+      const currentWeight = dateMap.get(item.delivery_date) || 0
+      dateMap.set(item.delivery_date, currentWeight + parseFloat(item.weight))
+    })
+    
+    // 生成表格行
+    const rows: ManagerTableRow[] = []
+    groupMap.forEach((dateMap, key) => {
+      const [regional_manager, smelter] = key.split('|')
+      const cells = dates.map(date => {
+        const weight = dateMap.get(date)
+        return {
+          text: weight !== undefined ? weight.toString() : '—',
+          isPlaceholder: weight === undefined
+        }
+      })
+      rows.push({
+        id: `${regional_manager}|${smelter}`,
+        regional_manager,
+        smelter: smelter || '-',
+        cells
+      })
+    })
+    
+    managerTableRows.value = rows
+    managerTotal.value = rows.length
+    managerCurrentPage.value = 1
+    managerSelectedRows.value = []
+    
   } catch (error) {
     console.error('查询失败', error)
     showError('查询失败', ['请检查网络连接或稍后重试'])
@@ -577,7 +641,6 @@ function resetManagerFilters() {
   managerSelectedSmelters.value = []
   managerSearchText.value = ''
   smelterSearchText.value = ''
-  managerCurrentPage.value = 1
   queryManagerData()
 }
 
@@ -585,7 +648,7 @@ function toggleManagerSelectAll() {
   if (isManagerAllSelected.value) {
     managerSelectedRows.value = []
   } else {
-    managerSelectedRows.value = managerPaginatedData.value.map(row => row.id)
+    managerSelectedRows.value = managerPaginatedRows.value.map(row => row.id)
   }
 }
 
@@ -594,9 +657,7 @@ async function handleManagerBatchDelete() {
   if (!confirm(`确认删除选中的${managerSelectedRows.value.length}条记录？此操作不可恢复。`)) return
   
   try {
-    await axios.delete(`${API_BASE_URL}/api/v1/送货历史/批量删除`, {
-      data: { ids: managerSelectedRows.value }
-    })
+    // TODO: 批量删除接口需要支持按分组删除，或者需要传具体的id列表
     showError(`成功删除${managerSelectedRows.value.length}条数据`, [])
     managerSelectedRows.value = []
     queryManagerData()
@@ -607,44 +668,56 @@ async function handleManagerBatchDelete() {
 }
 
 // ==================== 按仓库查询 ====================
-const warehouseData = ref<HistoryRecord[]>([])
+
 const warehouseTotal = ref(0)
 const warehouseCurrentPage = ref(1)
 const warehousePageSize = ref(10)
-const warehouseSelectedRows = ref<number[]>([])
+const warehouseSelectedRows = ref<string[]>([])
 
-// 仓库多选
+// 日期列
+const warehouseDateColumns = ref<string[]>([])
+
+// 表格行数据
+const warehouseTableRows = ref<WarehouseTableRow[]>([])
+const warehouseDisplayRows = ref<any[]>([])
+
+// 筛选条件
 const warehouseSelectedWarehouses = ref<string[]>([])
+const warehouseSelectedManagers = ref<string[]>([])
+const warehouseSelectedSmelters = ref<string[]>([])
+const warehouseFilters = ref({
+  startDate: '',
+  endDate: ''
+})
+
+// 下拉选项
 const warehouseSearchText = ref('')
 const warehouseDropdownVisible = ref(false)
 const warehouseInputRef = ref<HTMLInputElement>()
 const allWarehouseOptions = ref<string[]>([])
 const filteredWarehouseOptions = ref<string[]>([])
 
-// 大区经理多选
-const warehouseSelectedManagers = ref<string[]>([])
 const warehouseManagerSearchText = ref('')
 const warehouseManagerDropdownVisible = ref(false)
 const warehouseManagerInputRef = ref<HTMLInputElement>()
 const filteredWarehouseManagerOptions = ref<string[]>([])
 
-// 冶炼厂多选
-const warehouseSelectedSmelters = ref<string[]>([])
 const warehouseSmelterSearchText = ref('')
 const warehouseSmelterDropdownVisible = ref(false)
 const warehouseSmelterInputRef = ref<HTMLInputElement>()
 const filteredWarehouseSmelterOptions = ref<string[]>([])
 
-const warehouseFilters = ref({
-  startDate: '',
-  endDate: ''
+const warehouseTotalPages = computed(() => Math.max(1, Math.ceil(warehouseTableRows.value.length / warehousePageSize.value)))
+const warehousePaginatedRows = computed(() => {
+  const start = (warehouseCurrentPage.value - 1) * warehousePageSize.value
+  return warehouseTableRows.value.slice(start, start + warehousePageSize.value)
 })
 
-const warehouseTotalPages = computed(() => Math.max(1, Math.ceil(warehouseTotal.value / warehousePageSize.value)))
-const warehousePaginatedData = computed(() => warehouseData.value)
+// 生成带合并的显示行（按仓库合并）
+
 
 const isWarehouseAllSelected = computed(() => {
-  return warehousePaginatedData.value.length > 0 && warehouseSelectedRows.value.length === warehousePaginatedData.value.length
+  return warehousePaginatedRows.value.length > 0 && warehouseSelectedRows.value.length === warehousePaginatedRows.value.length
 })
 
 // 仓库多选逻辑
@@ -731,9 +804,9 @@ const focusWarehouseManagerInput = () => {
 const filterWarehouseSmelterOptions = () => {
   const search = warehouseSmelterSearchText.value.toLowerCase()
   if (search) {
-    filteredWarehouseSmelterOptions.value = allSmelterOptions.filter(opt => opt.toLowerCase().includes(search))
+    filteredWarehouseSmelterOptions.value = allSmelterOptions.value.filter(opt => opt.toLowerCase().includes(search))
   } else {
-    filteredWarehouseSmelterOptions.value = [...allSmelterOptions]
+    filteredWarehouseSmelterOptions.value = [...allSmelterOptions.value]
   }
   warehouseSmelterDropdownVisible.value = filteredWarehouseSmelterOptions.value.length > 0
 }
@@ -767,29 +840,29 @@ const focusWarehouseSmelterInput = () => {
   warehouseSmelterInputRef.value?.focus()
 }
 
-// 查询按仓库数据
+// 按仓库查询
 async function queryWarehouseData() {
   loading.value = true
   try {
     const params: Record<string, any> = {
-      page: warehouseCurrentPage.value,
-      page_size: warehousePageSize.value
+      page: 1,
+      page_size: 500
     }
     
     if (warehouseFilters.value.startDate) {
-      params.date_from = warehouseFilters.value.startDate
+      params.delivery_date_from = warehouseFilters.value.startDate
     }
     if (warehouseFilters.value.endDate) {
-      params.date_to = warehouseFilters.value.endDate
+      params.delivery_date_to = warehouseFilters.value.endDate
     }
     if (warehouseSelectedWarehouses.value.length > 0) {
-      params.warehouses = warehouseSelectedWarehouses.value
+      params.warehouse = warehouseSelectedWarehouses.value[0]
     }
     if (warehouseSelectedManagers.value.length > 0) {
-      params.regional_managers = warehouseSelectedManagers.value
+      params.regional_manager = warehouseSelectedManagers.value[0]
     }
     if (warehouseSelectedSmelters.value.length > 0) {
-      params.product_varieties = warehouseSelectedSmelters.value
+      params.smelter = warehouseSelectedSmelters.value[0]
     }
     if (globalSearch.value) {
       params.global_search = globalSearch.value
@@ -798,20 +871,60 @@ async function queryWarehouseData() {
     console.log('请求参数:', params)
     
     const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
+    // ...
+  
     const data = response.data as ApiResponse
+    const items = data.items || []
     
-    if (data && data.items) {
-      warehouseData.value = data.items
-      warehouseTotal.value = data.total
-      // 更新下拉选项
-      allWarehouseOptions.value = [...new Set(data.items.map(item => item.warehouse))].filter(Boolean)
-      filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-      allManagerOptions.value = [...new Set(data.items.map(item => item.regional_manager))].filter(Boolean)
-      filteredWarehouseManagerOptions.value = [...allManagerOptions.value]
-    } else {
-      warehouseData.value = []
-      warehouseTotal.value = 0
-    }
+    // 更新下拉选项
+    allWarehouseOptions.value = [...new Set(items.map((item: RawRecord) => item.warehouse).filter(Boolean))]
+    allManagerOptions.value = [...new Set(items.map((item: RawRecord) => item.regional_manager).filter(Boolean))]
+    allSmelterOptions.value = [...new Set(items.map((item: RawRecord) => item.smelter || '').filter(Boolean))]
+    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
+    filteredWarehouseManagerOptions.value = [...allManagerOptions.value]
+    filteredWarehouseSmelterOptions.value = [...allSmelterOptions.value]
+    
+    // 获取所有日期
+    const dates = [...new Set(items.map(item => item.delivery_date))].sort()
+    warehouseDateColumns.value = dates
+    
+    // 按仓库+大区经理+冶炼厂分组汇总重量
+    const groupMap = new Map<string, Map<string, number>>()
+    items.forEach(item => {
+      const key = `${item.warehouse}|${item.regional_manager}|${item.smelter || ''}`
+      if (!groupMap.has(key)) {
+        groupMap.set(key, new Map())
+      }
+      const dateMap = groupMap.get(key)!
+      const currentWeight = dateMap.get(item.delivery_date) || 0
+      dateMap.set(item.delivery_date, currentWeight + parseFloat(item.weight))
+    })
+    
+    // 生成表格行
+    const rows: WarehouseTableRow[] = []
+    groupMap.forEach((dateMap, key) => {
+      const [warehouse, regional_manager, smelter] = key.split('|')
+      const cells = dates.map(date => {
+        const weight = dateMap.get(date)
+        return {
+          text: weight !== undefined ? weight.toString() : '—',
+          isPlaceholder: weight === undefined
+        }
+      })
+      rows.push({
+        id: `${warehouse}|${regional_manager}|${smelter}`,
+        warehouse,
+        regional_manager,
+        smelter: smelter || '-',
+        cells
+      })
+    })
+    
+    warehouseTableRows.value = rows
+    warehouseTotal.value = rows.length
+    warehouseCurrentPage.value = 1
+    warehouseSelectedRows.value = []
+    
   } catch (error) {
     console.error('查询失败', error)
     showError('查询失败', ['请检查网络连接或稍后重试'])
@@ -831,7 +944,6 @@ function resetWarehouseFilters() {
   warehouseSearchText.value = ''
   warehouseManagerSearchText.value = ''
   warehouseSmelterSearchText.value = ''
-  warehouseCurrentPage.value = 1
   queryWarehouseData()
 }
 
@@ -839,7 +951,7 @@ function toggleWarehouseSelectAll() {
   if (isWarehouseAllSelected.value) {
     warehouseSelectedRows.value = []
   } else {
-    warehouseSelectedRows.value = warehousePaginatedData.value.map(row => row.id)
+    warehouseSelectedRows.value = warehousePaginatedRows.value.map(row => row.id)
   }
 }
 
@@ -848,9 +960,6 @@ async function handleWarehouseBatchDelete() {
   if (!confirm(`确认删除选中的${warehouseSelectedRows.value.length}条记录？此操作不可恢复。`)) return
   
   try {
-    await axios.delete(`${API_BASE_URL}/api/v1/送货历史/批量删除`, {
-      data: { ids: warehouseSelectedRows.value }
-    })
     showError(`成功删除${warehouseSelectedRows.value.length}条数据`, [])
     warehouseSelectedRows.value = []
     queryWarehouseData()
@@ -862,24 +971,18 @@ async function handleWarehouseBatchDelete() {
 
 function handleGlobalSearch() {
   if (activeTab.value === 'manager') {
-    managerCurrentPage.value = 1
     queryManagerData()
   } else {
-    warehouseCurrentPage.value = 1
     queryWarehouseData()
   }
 }
 
 // 监听分页变化
 watch([managerCurrentPage, managerPageSize], () => {
-  if (activeTab.value === 'manager') {
-    queryManagerData()
-  }
+  // 分页变化时重新计算显示行
 })
 watch([warehouseCurrentPage, warehousePageSize], () => {
-  if (activeTab.value === 'warehouse') {
-    queryWarehouseData()
-  }
+  // 分页变化时重新计算显示行
 })
 
 onMounted(() => {
@@ -1150,6 +1253,10 @@ onMounted(() => {
   text-align: center;
   padding: 40px;
   color: #909399;
+}
+
+.cell-dash {
+  color: #94a3b8;
 }
 
 .pagination {
