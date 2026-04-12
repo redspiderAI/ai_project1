@@ -1,3 +1,6 @@
+好的，给你修改接口路径后的完整 `HistoryManage.vue`：
+
+```vue
 <template>
   <div class="history-manage-page">
     <!-- 内页菜单 -->
@@ -582,7 +585,7 @@ const focusVarietyInput = () => {
 // ==================== 获取下拉选项 ====================
 const fetchOptions = async () => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/v1/history`, {
+    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, {
       params: { page: 1, page_size: 200 }
     })
     const data = response.data as ApiResponse
@@ -628,7 +631,7 @@ const fetchData = async () => {
       params.product_varieties = selectedVarieties.value
     }
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/history`, { params })
+    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
     const data = response.data as ApiResponse
     
     if (data && data.items) {
@@ -696,7 +699,7 @@ const handleBatchDelete = async () => {
   if (!confirm(`确认删除选中的${selectedRows.value.length}条记录？此操作不可恢复。`)) return
   
   try {
-    await axios.delete(`${API_BASE_URL}/api/v1/history/batch`, {
+    await axios.delete(`${API_BASE_URL}/api/v1/送货历史/批量删除`, {
       data: { ids: selectedRows.value }
     })
     showError(`成功删除${selectedRows.value.length}条数据`, [])
@@ -799,7 +802,7 @@ const exportModalExcel = () => {
 // ==================== 导入功能（带预览） ====================
 const downloadTemplate = async () => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/v1/history/template`, {
+    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史/模板`, {
       responseType: 'blob'
     })
     const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
@@ -1016,7 +1019,7 @@ const confirmImport = async () => {
     const formData = new FormData()
     formData.append('file', file)
     
-    const response = await axios.post(`${API_BASE_URL}/api/v1/history/import`, formData)
+    const response = await axios.post(`${API_BASE_URL}/api/v1/送货历史/import`, formData)
     
     console.log('导入响应:', response.data)
     
@@ -1162,3 +1165,4 @@ onMounted(() => {
 .status-selected { color: #2e7d32; font-weight: 500; }
 .status-none { color: #c0c4cc; }
 </style>
+```

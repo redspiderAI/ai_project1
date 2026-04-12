@@ -547,7 +547,7 @@ async function queryManagerData() {
     
     console.log('请求参数:', params)
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/history`, { params })
+    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
     const data = response.data as ApiResponse
     
     if (data && data.items) {
@@ -594,7 +594,7 @@ async function handleManagerBatchDelete() {
   if (!confirm(`确认删除选中的${managerSelectedRows.value.length}条记录？此操作不可恢复。`)) return
   
   try {
-    await axios.delete(`${API_BASE_URL}/api/v1/history/batch`, {
+    await axios.delete(`${API_BASE_URL}/api/v1/送货历史/批量删除`, {
       data: { ids: managerSelectedRows.value }
     })
     showError(`成功删除${managerSelectedRows.value.length}条数据`, [])
@@ -797,7 +797,7 @@ async function queryWarehouseData() {
     
     console.log('请求参数:', params)
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/history`, { params })
+    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
     const data = response.data as ApiResponse
     
     if (data && data.items) {
@@ -848,7 +848,7 @@ async function handleWarehouseBatchDelete() {
   if (!confirm(`确认删除选中的${warehouseSelectedRows.value.length}条记录？此操作不可恢复。`)) return
   
   try {
-    await axios.delete(`${API_BASE_URL}/api/v1/history/batch`, {
+    await axios.delete(`${API_BASE_URL}/api/v1/送货历史/批量删除`, {
       data: { ids: warehouseSelectedRows.value }
     })
     showError(`成功删除${warehouseSelectedRows.value.length}条数据`, [])
