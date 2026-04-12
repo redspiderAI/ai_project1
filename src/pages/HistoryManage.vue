@@ -1,4 +1,6 @@
-好的，给你修改接口路径后的完整 `HistoryManage.vue`：
+我来修复这些错误。主要问题是模板标签闭合和类型问题。
+
+## 修复后的完整 `HistoryManage.vue`
 
 ```vue
 <template>
@@ -48,6 +50,7 @@
               <tr>
                 <th width="40"><input type="checkbox" :checked="isAllPreviewSelected" @change="toggleSelectAllPreview" /></th>
                 <th>大区经理</th>
+                <th>冶炼厂</th>
                 <th>仓库</th>
                 <th>送货日期</th>
                 <th>品种</th>
@@ -58,13 +61,14 @@
               <tr v-for="(row, idx) in previewData" :key="idx">
                 <td><input type="checkbox" v-model="selectedPreviewRows" :value="idx" /></td>
                 <td>{{ row.regionalManager || '-' }}</td>
+                <td>{{ row.smelter || '-' }}</td>
                 <td>{{ row.warehouse || '-' }}</td>
                 <td>{{ row.deliveryDate || '-' }}</td>
                 <td>{{ row.variety || '-' }}</td>
                 <td>{{ row.weight || '-' }}</td>
               </tr>
               <tr v-if="previewData.length === 0">
-                <td :colspan="6" class="empty-data">暂无数据</td>
+                <td :colspan="7" class="empty-data">暂无数据</td>
               </tr>
             </tbody>
           </table>
@@ -80,7 +84,7 @@
       <div v-else class="card placeholder">
         <div class="placeholder-content">
           <p>📥 请点击"导入数据"按钮，选择符合模板的Excel文件</p>
-          <p class="placeholder-tip">模板表头：大区经理、仓库、送货日期、品种、重量</p>
+          <p class="placeholder-tip">模板表头：大区经理、冶炼厂、仓库、送货日期、品种、重量</p>
         </div>
       </div>
     </div>
@@ -126,6 +130,40 @@
                   :key="item"
                   class="dropdown-item"
                   @click="addManager(item)"
+                >
+                  {{ item }}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 冶炼厂多选 -->
+          <div class="filter-item multi-select-item">
+            <label>冶炼厂</label>
+            <div class="multi-select-container">
+              <div class="selected-tags" @click="focusSmelterInput">
+                <span v-for="item in selectedSmelters" :key="item" class="tag">
+                  {{ item }}
+                  <button type="button" class="tag-remove" @click.stop="removeSmelter(item)">×</button>
+                </span>
+                <input 
+                  ref="smelterInputRef"
+                  v-model="smelterSearchText"
+                  type="text"
+                  class="multi-input"
+                  placeholder="搜索并选择"
+                  @input="filterSmelterOptions"
+                  @focus="smelterDropdownVisible = true"
+                  @blur="closeSmelterDropdown"
+                  @keydown.enter="handleSmelterKeydown"
+                />
+              </div>
+              <div v-show="smelterDropdownVisible && filteredSmelterOptions.length > 0" class="dropdown-list">
+                <div 
+                  v-for="item in filteredSmelterOptions" 
+                  :key="item"
+                  class="dropdown-item"
+                  @click="addSmelter(item)"
                 >
                   {{ item }}
                 </div>
@@ -227,6 +265,7 @@
                 <th width="40"><input type="checkbox" :checked="isAllSelected" @change="toggleSelectAll" /></th>
                 <th>送货日期</th>
                 <th>大区经理</th>
+                <th>冶炼厂</th>
                 <th>仓库</th>
                 <th>品种</th>
                 <th>重量(吨)</th>
@@ -238,13 +277,14 @@
                 <td><input type="checkbox" v-model="selectedRows" :value="row.id" /></td>
                 <td>{{ row.delivery_date }}</td>
                 <td>{{ row.regional_manager }}</td>
+                <td>{{ row.smelter || '-' }}</td>
                 <td>{{ row.warehouse }}</td>
                 <td>{{ row.product_variety }}</td>
                 <td>{{ parseFloat(row.weight).toFixed(2) }}</td>
                 <td><button class="btn-view" @click="openDetailModal(row)">查看</button></td>
               </tr>
               <tr v-if="paginatedData.length === 0">
-                <td :colspan="7" class="empty-data">暂无数据</td>
+                <td :colspan="8" class="empty-data">暂无数据</td>
               </tr>
             </tbody>
           </table>
@@ -272,9 +312,12 @@
         </div>
         <div class="modal-body">
           <div class="modal-info">
-            <p><strong>送货日期：</strong>{{ modalData?.delivery_date }}</p>
-            <p><strong>大区经理：</strong>{{ modalData?.regional_manager }}</p>
-            <p><strong>仓库：</strong>{{ modalData?.warehouse }}</p>
+            <p><strong>送货日期：</strong>{{ modalData?.delivery_date || '-' }}</p>
+            <p><strong>大区经理：</strong>{{ modalData?.regional_manager || '-' }}</p>
+            <p><strong>冶炼厂：</strong>{{ modalData?.smelter || '-' }}</p>
+            <p><strong>仓库：</strong>{{ modalData?.warehouse || '-' }}</p>
+            <p><strong>品种：</strong>{{ modalData?.product_variety || '-' }}</p>
+            <p><strong>重量：</strong>{{ modalData?.weight ? parseFloat(modalData.weight).toFixed(2) : '-' }} 吨</p>
           </div>
           <div class="modal-table-header">
             <span class="modal-result-label">品种明细</span>
@@ -285,6 +328,7 @@
               <thead>
                 <tr>
                   <th>品种</th>
+                  <th>冶炼厂</th>
                   <th>重量(吨)</th>
                   <th width="100">筛选状态</th>
                 </tr>
@@ -292,6 +336,7 @@
               <tbody>
                 <tr v-for="item in modalVarietyData" :key="item.variety" :class="{ 'row-selected': isVarietySelected(item.variety) }">
                   <td>{{ item.variety }}</td>
+                  <td>{{ item.smelter || '-' }}</td>
                   <td>{{ item.weight.toFixed(2) }}</td>
                   <td>
                     <span v-if="isVarietySelected(item.variety)" class="status-selected">✅ 已选择</span>
@@ -299,7 +344,7 @@
                   </td>
                 </tr>
                 <tr v-if="modalVarietyData.length === 0">
-                  <td :colspan="3" class="empty-data">暂无数据</td>
+                  <td :colspan="4" class="empty-data">暂无数据</td>
                 </tr>
               </tbody>
             </table>
@@ -351,12 +396,14 @@ interface HistoryRecord {
   regional_manager: string
   warehouse: string
   product_variety: string
+  smelter?: string
   weight: string
   created_at: string
 }
 
 interface PreviewRow {
   regionalManager: string
+  smelter: string
   warehouse: string
   deliveryDate: string
   variety: string
@@ -407,6 +454,14 @@ const managerInputRef = ref<HTMLInputElement>()
 const allManagerOptions = ref<string[]>([])
 const filteredManagerOptions = ref<string[]>([])
 
+// 冶炼厂多选
+const selectedSmelters = ref<string[]>([])
+const smelterSearchText = ref('')
+const smelterDropdownVisible = ref(false)
+const smelterInputRef = ref<HTMLInputElement>()
+const allSmelterOptions = ref<string[]>([])
+const filteredSmelterOptions = ref<string[]>([])
+
 // 仓库多选
 const selectedWarehouses = ref<string[]>([])
 const warehouseSearchText = ref('')
@@ -441,7 +496,7 @@ const isAllPreviewSelected = computed(() => {
 const modalVisible = ref(false)
 const modalData = ref<HistoryRecord | null>(null)
 const modalTitle = ref('')
-const modalVarietyData = ref<{ variety: string; weight: number }[]>([])
+const modalVarietyData = ref<{ variety: string; smelter: string; weight: number }[]>([])
 
 // ==================== 错误弹窗 ====================
 const showError = (message: string, details?: string[]) => {
@@ -496,6 +551,48 @@ const closeManagerDropdown = () => {
 
 const focusManagerInput = () => {
   managerInputRef.value?.focus()
+}
+
+// ==================== 冶炼厂逻辑 ====================
+const filterSmelterOptions = () => {
+  const search = smelterSearchText.value.toLowerCase()
+  if (search) {
+    filteredSmelterOptions.value = allSmelterOptions.value.filter(opt => opt.toLowerCase().includes(search))
+  } else {
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
+  }
+  smelterDropdownVisible.value = filteredSmelterOptions.value.length > 0
+}
+
+const addSmelter = (item: string) => {
+  if (!selectedSmelters.value.includes(item)) {
+    selectedSmelters.value.push(item)
+  }
+  smelterSearchText.value = ''
+  filterSmelterOptions()
+  fetchData()
+}
+
+const removeSmelter = (item: string) => {
+  selectedSmelters.value = selectedSmelters.value.filter(i => i !== item)
+  fetchData()
+}
+
+const handleSmelterKeydown = (e: KeyboardEvent) => {
+  if (e.key === 'Enter' && smelterSearchText.value.trim()) {
+    addSmelter(smelterSearchText.value.trim())
+    e.preventDefault()
+  }
+}
+
+const closeSmelterDropdown = () => {
+  setTimeout(() => {
+    smelterDropdownVisible.value = false
+  }, 200)
+}
+
+const focusSmelterInput = () => {
+  smelterInputRef.value?.focus()
 }
 
 // ==================== 仓库逻辑 ====================
@@ -592,10 +689,12 @@ const fetchOptions = async () => {
     const items = data.items || []
     
     allManagerOptions.value = [...new Set(items.map((item: HistoryRecord) => item.regional_manager))].filter(Boolean)
+allSmelterOptions.value = [...new Set(items.map((item: HistoryRecord) => item.smelter || '').filter(Boolean))]
     allWarehouseOptions.value = [...new Set(items.map((item: HistoryRecord) => item.warehouse))].filter(Boolean)
     allVarietyOptions.value = [...new Set(items.map((item: HistoryRecord) => item.product_variety))].filter(Boolean)
     
     filteredManagerOptions.value = [...allManagerOptions.value]
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
     filteredWarehouseOptions.value = [...allWarehouseOptions.value]
     filteredVarietyOptions.value = [...allVarietyOptions.value]
   } catch (error) {
@@ -622,11 +721,12 @@ const fetchData = async () => {
     if (selectedManagers.value.length > 0) {
       params.regional_managers = selectedManagers.value
     }
-    
+    if (selectedSmelters.value.length > 0) {
+      params.smelters = selectedSmelters.value
+    }
     if (selectedWarehouses.value.length > 0) {
       params.warehouses = selectedWarehouses.value
     }
-    
     if (selectedVarieties.value.length > 0) {
       params.product_varieties = selectedVarieties.value
     }
@@ -661,9 +761,11 @@ const handleReset = () => {
     endDate: ''
   }
   selectedManagers.value = []
+  selectedSmelters.value = []
   selectedWarehouses.value = []
   selectedVarieties.value = []
   managerSearchText.value = ''
+  smelterSearchText.value = ''
   warehouseSearchText.value = ''
   varietySearchText.value = ''
   currentPage.value = 1
@@ -719,10 +821,11 @@ const exportFilteredData = () => {
     return
   }
   
-  const headers = ['送货日期', '大区经理', '仓库', '品种', '重量(吨)']
+  const headers = ['送货日期', '大区经理', '冶炼厂', '仓库', '品种', '重量(吨)']
   const rowsData = allData.value.map(item => [
     item.delivery_date,
     item.regional_manager,
+    item.smelter || '',
     item.warehouse,
     item.product_variety,
     parseFloat(item.weight).toFixed(2)
@@ -755,15 +858,24 @@ const openDetailModal = (row: HistoryRecord) => {
     item.warehouse === row.warehouse
   )
   
-  const varietyMap = new Map<string, number>()
+  const varietyMap = new Map<string, { weight: number; smelter: string }>()
   sameDayData.forEach(item => {
-    const current = varietyMap.get(item.product_variety) || 0
-    varietyMap.set(item.product_variety, current + parseFloat(item.weight))
+    const key = item.product_variety
+    const existing = varietyMap.get(key)
+    if (existing) {
+      existing.weight += parseFloat(item.weight)
+    } else {
+      varietyMap.set(key, {
+        weight: parseFloat(item.weight),
+        smelter: item.smelter || ''
+      })
+    }
   })
   
-  modalVarietyData.value = Array.from(varietyMap.entries()).map(([variety, weight]) => ({
+  modalVarietyData.value = Array.from(varietyMap.entries()).map(([variety, data]) => ({
     variety,
-    weight
+    smelter: data.smelter,
+    weight: data.weight
   }))
   
   modalVisible.value = true
@@ -782,9 +894,10 @@ const exportModalExcel = () => {
     return
   }
   
-  const headers = ['品种', '重量(吨)', '筛选状态']
+  const headers = ['品种', '冶炼厂', '重量(吨)', '筛选状态']
   const rowsData = modalVarietyData.value.map(item => [
     item.variety,
+    item.smelter,
     item.weight.toFixed(2),
     isVarietySelected(item.variety) ? '已选择' : '未选择'
   ])
@@ -799,7 +912,7 @@ const exportModalExcel = () => {
   URL.revokeObjectURL(link.href)
 }
 
-// ==================== 导入功能（带预览） ====================
+// ==================== 导入功能 ====================
 const downloadTemplate = async () => {
   try {
     const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史/模板`, {
@@ -842,7 +955,7 @@ const handleFileSelect = async (event: Event) => {
     const worksheet = workbook.Sheets[sheetName]
     const data: any[][] = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' })
     
-    const expectedHeaders = ['大区经理', '仓库', '送货日期', '品种', '重量']
+    const expectedHeaders = ['大区经理', '冶炼厂', '仓库', '送货日期', '品种', '重量']
     
     if (data.length === 0 || !data[0]) {
       showError('文件为空', ['文件没有数据行'])
@@ -889,13 +1002,15 @@ const handleFileSelect = async (event: Event) => {
       }
       
       const regionalManager = getCellValue(0)
-      const warehouse = getCellValue(1)
-      let deliveryDate = getCellValue(2)
-      const variety = getCellValue(3)
-      const weight = getCellValue(4)
+      const smelter = getCellValue(1)
+      const warehouse = getCellValue(2)
+      let deliveryDate = getCellValue(3)
+      const variety = getCellValue(4)
+      const weight = getCellValue(5)
       
       const emptyFields = []
       if (!regionalManager) emptyFields.push('大区经理')
+      if (!smelter) emptyFields.push('冶炼厂')
       if (!warehouse) emptyFields.push('仓库')
       if (!deliveryDate) emptyFields.push('送货日期')
       if (!variety) emptyFields.push('品种')
@@ -935,6 +1050,7 @@ const handleFileSelect = async (event: Event) => {
       
       const previewRow: PreviewRow = {
         regionalManager,
+        smelter,
         warehouse,
         deliveryDate,
         variety,
@@ -1002,9 +1118,10 @@ const confirmImport = async () => {
     const selectedIndices = selectedPreviewRows.value
     const selectedFullData = previewRawData.value.filter((_, idx) => selectedIndices.includes(idx))
     
-    const headers = ['大区经理', '仓库', '送货日期', '品种', '重量']
+    const headers = ['大区经理', '冶炼厂', '仓库', '送货日期', '品种', '重量']
     const rowsData = selectedFullData.map(row => [
       row.regionalManager,
+      row.smelter,
       row.warehouse,
       row.deliveryDate,
       row.variety,
@@ -1059,7 +1176,7 @@ const confirmImport = async () => {
     if (errorDetails.length === 0) {
       errorDetails.push('请检查网络连接')
       errorDetails.push('确认数据格式是否正确')
-      errorDetails.push('表头必须为：大区经理、仓库、送货日期、品种、重量')
+      errorDetails.push('表头必须为：大区经理、冶炼厂、仓库、送货日期、品种、重量')
     }
     
     showError('导入失败', errorDetails)
