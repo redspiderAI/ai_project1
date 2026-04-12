@@ -8,18 +8,23 @@
           <label>大区经理</label>
           <div class="multi-select-container">
             <div class="selected-tags" @click="focusManagerInput">
-              <span v-for="item in selectedManagers" :key="item" class="tag">
+              <span v-for="item in managersTagsPreview" :key="item" class="tag tag-shrink">
                 {{ item }}
                 <button type="button" class="tag-remove" @click.stop="removeManager(item)">×</button>
               </span>
+              <span
+                v-if="managersTagsMore > 0"
+                class="tag tag-more tag-shrink"
+                :title="'还有：' + managersTagsRest.join('、')"
+              >+{{ managersTagsMore }}</span>
               <input 
                 ref="managerInputRef"
                 v-model="managerSearchText"
                 type="text"
                 class="multi-input"
                 placeholder="搜索并选择"
-                @input="filterManagerOptions"
-                @focus="managerDropdownVisible = true"
+                @input="onManagerSearchInput"
+                @focus="onManagerFocus"
                 @blur="closeManagerDropdown"
                 @keydown.enter="handleManagerKeydown"
               />
@@ -29,7 +34,8 @@
                 v-for="item in filteredManagerOptions" 
                 :key="item"
                 class="dropdown-item"
-                @click="addManager(item)"
+                :class="{ 'dropdown-item--selected': selectedManagers.includes(item) }"
+                @click="onManagerDropdownPick(item)"
               >
                 {{ item }}
               </div>
@@ -42,18 +48,23 @@
           <label>仓库</label>
           <div class="multi-select-container">
             <div class="selected-tags" @click="focusWarehouseInput">
-              <span v-for="item in selectedWarehouses" :key="item" class="tag">
+              <span v-for="item in warehousesTagsPreview" :key="item" class="tag tag-shrink">
                 {{ item }}
                 <button type="button" class="tag-remove" @click.stop="removeWarehouse(item)">×</button>
               </span>
+              <span
+                v-if="warehousesTagsMore > 0"
+                class="tag tag-more tag-shrink"
+                :title="'还有：' + warehousesTagsRest.join('、')"
+              >+{{ warehousesTagsMore }}</span>
               <input 
                 ref="warehouseInputRef"
                 v-model="warehouseSearchText"
                 type="text"
                 class="multi-input"
                 placeholder="搜索并选择"
-                @input="filterWarehouseOptions"
-                @focus="warehouseDropdownVisible = true"
+                @input="onWarehouseSearchInput"
+                @focus="onWarehouseFocus"
                 @blur="closeWarehouseDropdown"
                 @keydown.enter="handleWarehouseKeydown"
               />
@@ -63,7 +74,8 @@
                 v-for="item in filteredWarehouseOptions" 
                 :key="item"
                 class="dropdown-item"
-                @click="addWarehouse(item)"
+                :class="{ 'dropdown-item--selected': selectedWarehouses.includes(item) }"
+                @click="onWarehouseDropdownPick(item)"
               >
                 {{ item }}
               </div>
@@ -76,18 +88,23 @@
           <label>品种</label>
           <div class="multi-select-container">
             <div class="selected-tags" @click="focusVarietyInput">
-              <span v-for="item in selectedVarieties" :key="item" class="tag">
+              <span v-for="item in varietiesTagsPreview" :key="item" class="tag tag-shrink">
                 {{ item }}
                 <button type="button" class="tag-remove" @click.stop="removeVariety(item)">×</button>
               </span>
+              <span
+                v-if="varietiesTagsMore > 0"
+                class="tag tag-more tag-shrink"
+                :title="'还有：' + varietiesTagsRest.join('、')"
+              >+{{ varietiesTagsMore }}</span>
               <input 
                 ref="varietyInputRef"
                 v-model="varietySearchText"
                 type="text"
                 class="multi-input"
                 placeholder="搜索并选择"
-                @input="filterVarietyOptions"
-                @focus="varietyDropdownVisible = true"
+                @input="onVarietySearchInput"
+                @focus="onVarietyFocus"
                 @blur="closeVarietyDropdown"
                 @keydown.enter="handleVarietyKeydown"
               />
@@ -97,7 +114,8 @@
                 v-for="item in filteredVarietyOptions" 
                 :key="item"
                 class="dropdown-item"
-                @click="addVariety(item)"
+                :class="{ 'dropdown-item--selected': selectedVarieties.includes(item) }"
+                @click="onVarietyDropdownPick(item)"
               >
                 {{ item }}
               </div>
@@ -169,6 +187,36 @@
       </div>
       <div v-else-if="loading" class="loading-placeholder">预测计算中...</div>
       <div v-else class="loading-placeholder">暂无数据，请点击查询</div>
+    </div>
+
+    <!-- 图表接口：按日汇总表（合计 + 各大区经理） -->
+    <div class="card" v-if="chartSummaryDates.length > 0">
+      <div class="section-title">预测按日汇总（吨）</div>
+      <p class="chart-summary-hint">数据来自接口「送货量预测/图表」，与当前筛选日期范围、大区经理、仓库一致。</p>
+      <div class="table-wrapper chart-summary-table-wrap">
+        <table class="data-table chart-summary-table">
+          <thead>
+            <tr>
+              <th class="sticky-col">维度</th>
+              <th v-for="d in chartSummaryDates" :key="d">{{ chartSummaryDateLabel(d) }}</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr class="row-total">
+              <td class="sticky-col"><strong>合计</strong></td>
+              <td v-for="(d, i) in chartSummaryDates" :key="'t-' + d">
+                {{ formatChartWeight(chartSummaryTotalByDate[i]) }}
+              </td>
+            </tr>
+            <tr v-for="row in chartSummaryByManager" :key="row.regional_manager">
+              <td class="sticky-col">{{ row.regional_manager }}</td>
+              <td v-for="(d, i) in chartSummaryDates" :key="row.regional_manager + '-' + d">
+                {{ formatChartWeight(row.totals[i]) }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
     <!-- 明细数据区 -->
@@ -265,11 +313,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import axios from 'axios'
-
-// ==================== 配置 ====================
-const API_BASE_URL = 'http://111.229.25.160:8001'
+import { ApiPaths } from '../api/paths'
 
 // ==================== 类型定义 ====================
 interface PredictResult {
@@ -288,6 +334,13 @@ interface DetailResponse {
   items: PredictResult[]
 }
 
+/** GET /api/v1/送货量预测/图表 */
+interface ChartSummaryResponse {
+  dates: string[]
+  total_by_date: string[]
+  by_regional_manager: { regional_manager: string; totals: string[] }[]
+}
+
 // ==================== 颜色常量 ====================
 const colors = ['#1F77B4', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD', '#8C564B', '#E377C2', '#7F7F7F']
 
@@ -296,6 +349,10 @@ const loading = ref(false)
 const detailData = ref<PredictResult[]>([])
 const detailTotal = ref(0)
 const chartCanvas = ref<HTMLCanvasElement>()
+
+const chartSummaryDates = ref<string[]>([])
+const chartSummaryTotalByDate = ref<string[]>([])
+const chartSummaryByManager = ref<{ regional_manager: string; totals: string[] }[]>([])
 
 // 图例开关
 const seriesVisibility = ref<Map<string, boolean>>(new Map())
@@ -343,6 +400,21 @@ const varietyInputRef = ref<HTMLInputElement>()
 const allVarietyOptions = ref<string[]>([])
 const filteredVarietyOptions = ref<string[]>([])
 
+/** 多选框内单行展示：只显示前 N 个标签，其余用 +M（悬停可看全部名称） */
+const MULTI_PREVIEW_TAG_COUNT = 1
+
+const managersTagsPreview = computed(() => selectedManagers.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const managersTagsMore = computed(() => Math.max(0, selectedManagers.value.length - MULTI_PREVIEW_TAG_COUNT))
+const managersTagsRest = computed(() => selectedManagers.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
+const warehousesTagsPreview = computed(() => selectedWarehouses.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const warehousesTagsMore = computed(() => Math.max(0, selectedWarehouses.value.length - MULTI_PREVIEW_TAG_COUNT))
+const warehousesTagsRest = computed(() => selectedWarehouses.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
+const varietiesTagsPreview = computed(() => selectedVarieties.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const varietiesTagsMore = computed(() => Math.max(0, selectedVarieties.value.length - MULTI_PREVIEW_TAG_COUNT))
+const varietiesTagsRest = computed(() => selectedVarieties.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
 // 分页
 const currentPage = ref(1)
 const pageSize = ref(10)
@@ -384,10 +456,16 @@ function validateDateRange() {
   }
 }
 
+/** 下拉按搜索关键字过滤；已选项仍保留在列表中，用样式标灰 */
+function filterOptionsBySearch(options: string[], searchLower: string) {
+  if (!searchLower) return [...options]
+  return options.filter((opt) => opt.toLowerCase().includes(searchLower))
+}
+
 // ==================== 获取下拉选项 ====================
 async function fetchOptions() {
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, {
+    const response = await axios.get(ApiPaths.deliveryHistory, {
       params: { page: 1, page_size: 200 }
     })
     const data = response.data as { items: any[] }
@@ -397,30 +475,35 @@ async function fetchOptions() {
     allWarehouseOptions.value = [...new Set(items.map((item: any) => item.warehouse))].filter(Boolean)
     allVarietyOptions.value = [...new Set(items.map((item: any) => item.product_variety))].filter(Boolean)
     
-    filteredManagerOptions.value = [...allManagerOptions.value]
-    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-    filteredVarietyOptions.value = [...allVarietyOptions.value]
+    filterManagerOptions()
+    filterWarehouseOptions()
+    filterVarietyOptions()
   } catch (error) {
     console.error('获取选项失败', error)
     // 使用模拟数据作为后备
     allManagerOptions.value = ['张建国', '李明华', '王德发']
     allWarehouseOptions.value = ['北京仓库', '上海仓库', '广州仓库']
     allVarietyOptions.value = ['电解铜', '铝锭', '锌锭']
-    filteredManagerOptions.value = [...allManagerOptions.value]
-    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-    filteredVarietyOptions.value = [...allVarietyOptions.value]
+    filterManagerOptions()
+    filterWarehouseOptions()
+    filterVarietyOptions()
   }
 }
 
 // ==================== 大区经理多选逻辑 ====================
 const filterManagerOptions = () => {
   const search = managerSearchText.value.toLowerCase()
-  if (search) {
-    filteredManagerOptions.value = allManagerOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredManagerOptions.value = [...allManagerOptions.value]
-  }
-  managerDropdownVisible.value = filteredManagerOptions.value.length > 0
+  filteredManagerOptions.value = filterOptionsBySearch(allManagerOptions.value, search)
+}
+
+function onManagerFocus() {
+  managerDropdownVisible.value = true
+  filterManagerOptions()
+}
+
+function onManagerSearchInput() {
+  managerDropdownVisible.value = true
+  filterManagerOptions()
 }
 
 const addManager = (item: string) => {
@@ -433,6 +516,12 @@ const addManager = (item: string) => {
 
 const removeManager = (item: string) => {
   selectedManagers.value = selectedManagers.value.filter(i => i !== item)
+  filterManagerOptions()
+}
+
+function onManagerDropdownPick(item: string) {
+  if (selectedManagers.value.includes(item)) removeManager(item)
+  else addManager(item)
 }
 
 const handleManagerKeydown = (e: KeyboardEvent) => {
@@ -449,18 +538,25 @@ const closeManagerDropdown = () => {
 }
 
 const focusManagerInput = () => {
-  managerInputRef.value?.focus()
+  managerDropdownVisible.value = true
+  filterManagerOptions()
+  nextTick(() => managerInputRef.value?.focus())
 }
 
 // ==================== 仓库多选逻辑 ====================
 const filterWarehouseOptions = () => {
   const search = warehouseSearchText.value.toLowerCase()
-  if (search) {
-    filteredWarehouseOptions.value = allWarehouseOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-  }
-  warehouseDropdownVisible.value = filteredWarehouseOptions.value.length > 0
+  filteredWarehouseOptions.value = filterOptionsBySearch(allWarehouseOptions.value, search)
+}
+
+function onWarehouseFocus() {
+  warehouseDropdownVisible.value = true
+  filterWarehouseOptions()
+}
+
+function onWarehouseSearchInput() {
+  warehouseDropdownVisible.value = true
+  filterWarehouseOptions()
 }
 
 const addWarehouse = (item: string) => {
@@ -473,6 +569,12 @@ const addWarehouse = (item: string) => {
 
 const removeWarehouse = (item: string) => {
   selectedWarehouses.value = selectedWarehouses.value.filter(i => i !== item)
+  filterWarehouseOptions()
+}
+
+function onWarehouseDropdownPick(item: string) {
+  if (selectedWarehouses.value.includes(item)) removeWarehouse(item)
+  else addWarehouse(item)
 }
 
 const handleWarehouseKeydown = (e: KeyboardEvent) => {
@@ -489,18 +591,25 @@ const closeWarehouseDropdown = () => {
 }
 
 const focusWarehouseInput = () => {
-  warehouseInputRef.value?.focus()
+  warehouseDropdownVisible.value = true
+  filterWarehouseOptions()
+  nextTick(() => warehouseInputRef.value?.focus())
 }
 
 // ==================== 品种多选逻辑 ====================
 const filterVarietyOptions = () => {
   const search = varietySearchText.value.toLowerCase()
-  if (search) {
-    filteredVarietyOptions.value = allVarietyOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredVarietyOptions.value = [...allVarietyOptions.value]
-  }
-  varietyDropdownVisible.value = filteredVarietyOptions.value.length > 0
+  filteredVarietyOptions.value = filterOptionsBySearch(allVarietyOptions.value, search)
+}
+
+function onVarietyFocus() {
+  varietyDropdownVisible.value = true
+  filterVarietyOptions()
+}
+
+function onVarietySearchInput() {
+  varietyDropdownVisible.value = true
+  filterVarietyOptions()
 }
 
 const addVariety = (item: string) => {
@@ -513,6 +622,12 @@ const addVariety = (item: string) => {
 
 const removeVariety = (item: string) => {
   selectedVarieties.value = selectedVarieties.value.filter(i => i !== item)
+  filterVarietyOptions()
+}
+
+function onVarietyDropdownPick(item: string) {
+  if (selectedVarieties.value.includes(item)) removeVariety(item)
+  else addVariety(item)
 }
 
 const handleVarietyKeydown = (e: KeyboardEvent) => {
@@ -529,7 +644,9 @@ const closeVarietyDropdown = () => {
 }
 
 const focusVarietyInput = () => {
-  varietyInputRef.value?.focus()
+  varietyDropdownVisible.value = true
+  filterVarietyOptions()
+  nextTick(() => varietyInputRef.value?.focus())
 }
 
 // ==================== 触发预测 ====================
@@ -564,15 +681,22 @@ async function triggerPredict() {
         })
       }
     }
-    // 只有品种
+    // 只有品种：接口要求每项必须有 warehouse，按「全部可选仓库 × 品种」展开
     else if (selectedVarieties.value.length > 0) {
-      for (const variety of selectedVarieties.value) {
-        items.push({
-          productVariety: variety,
-          horizon_days: 15,
-          prediction_start_date: filters.value.startDate,
-          use_cache: true
-        })
+      const warehouses =
+        allWarehouseOptions.value.length > 0
+          ? allWarehouseOptions.value
+          : ['北京仓库', '上海仓库', '广州仓库']
+      for (const warehouse of warehouses) {
+        for (const variety of selectedVarieties.value) {
+          items.push({
+            warehouse,
+            productVariety: variety,
+            horizon_days: 15,
+            prediction_start_date: filters.value.startDate,
+            use_cache: true
+          })
+        }
       }
     }
     // 没有选择时，使用默认值（修改这里！）
@@ -588,16 +712,58 @@ async function triggerPredict() {
     
     console.log('预测请求参数:', JSON.stringify({ items }, null, 2))
     
-    await axios.post(`${API_BASE_URL}/api/v1/预测`, { items })
+    await axios.post(ApiPaths.predict, { items })
     await new Promise(resolve => setTimeout(resolve, 1500))
     
   } catch (error: any) {
     console.error('预测失败', error)
-    const errorMsg = error.response?.data?.message || error.message || '预测失败'
-    showError(errorMsg, ['请检查请求参数是否正确'])
+    const data = error.response?.data
+    const detail = data?.detail
+    let detailLines: string[] = []
+    if (Array.isArray(detail)) {
+      detailLines = detail.map((d: any) => {
+        if (d && typeof d === 'object' && 'msg' in d) {
+          const loc = Array.isArray(d.loc) ? d.loc.join(' → ') : ''
+          return loc ? `${loc}：${d.msg}` : String(d.msg)
+        }
+        return String(d)
+      })
+    } else if (typeof detail === 'string') {
+      detailLines = [detail]
+    }
+    const errorMsg =
+      data?.message || (detailLines.length > 0 ? '请求参数未通过校验' : '') || error.message || '预测失败'
+    showError(errorMsg, detailLines.length > 0 ? detailLines : ['请检查请求参数是否正确'])
   } finally {
     loading.value = false
   }
+}
+
+function chartSummaryDateLabel(ymd: string) {
+  return ymd.length >= 10 ? ymd.slice(5) : ymd
+}
+
+function formatChartWeight(v: string | undefined) {
+  if (v == null || v === '') return '—'
+  const n = parseFloat(v)
+  return Number.isNaN(n) ? String(v) : n.toFixed(2)
+}
+
+function buildForecastFilterParams(): Record<string, any> {
+  const params: Record<string, any> = {
+    date_from: filters.value.startDate,
+    date_to: filters.value.endDate
+  }
+  if (selectedManagers.value.length > 0) {
+    params.regional_managers = selectedManagers.value
+  }
+  if (selectedWarehouses.value.length > 0) {
+    params.warehouses = selectedWarehouses.value
+  }
+  if (selectedVarieties.value.length > 0) {
+    params.product_varieties = selectedVarieties.value
+  }
+  return params
 }
 
 // ==================== 获取明细数据 ====================
@@ -606,23 +772,12 @@ async function fetchDetailData() {
     const params: Record<string, any> = {
       page: currentPage.value,
       page_size: pageSize.value,
-      date_from: filters.value.startDate,
-      date_to: filters.value.endDate
+      ...buildForecastFilterParams()
     }
-    
-    if (selectedManagers.value.length > 0) {
-      params.regional_managers = selectedManagers.value
-    }
-    if (selectedWarehouses.value.length > 0) {
-      params.warehouses = selectedWarehouses.value
-    }
-    if (selectedVarieties.value.length > 0) {
-      params.product_varieties = selectedVarieties.value
-    }
-    
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货量预测/明细`, { params })
+
+    const response = await axios.get(ApiPaths.forecastDetail, { params })
     const data = response.data as DetailResponse
-    
+
     if (data) {
       detailData.value = data.items || []
       detailTotal.value = data.total || 0
@@ -634,11 +789,36 @@ async function fetchDetailData() {
   }
 }
 
+/** 与 Swagger「送货量预测/图表」一致：按日合计 + 分大区经理曲线数据 */
+async function fetchChartSummary() {
+  try {
+    const params = buildForecastFilterParams()
+    const response = await axios.get(ApiPaths.forecastChart, { params })
+    const data = response.data as ChartSummaryResponse
+    if (!data || !Array.isArray(data.dates)) {
+      chartSummaryDates.value = []
+      chartSummaryTotalByDate.value = []
+      chartSummaryByManager.value = []
+      return
+    }
+    chartSummaryDates.value = data.dates
+    chartSummaryTotalByDate.value = data.total_by_date || []
+    chartSummaryByManager.value = Array.isArray(data.by_regional_manager)
+      ? data.by_regional_manager
+      : []
+  } catch (error: any) {
+    console.error('获取预测图表汇总失败', error)
+    chartSummaryDates.value = []
+    chartSummaryTotalByDate.value = []
+    chartSummaryByManager.value = []
+  }
+}
+
 // ==================== 查询 ====================
 async function handleQuery() {
   currentPage.value = 1
   await triggerPredict()
-  await fetchDetailData()
+  await Promise.all([fetchDetailData(), fetchChartSummary()])
   setTimeout(() => drawChart(), 100)
 }
 
@@ -908,7 +1088,7 @@ async function exportExcel() {
       params.product_varieties = selectedVarieties.value
     }
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货量预测/导出`, {
+    const response = await axios.get(ApiPaths.forecastExport, {
       params,
       responseType: 'blob'
     })
@@ -954,7 +1134,7 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .filter-item {
@@ -1003,24 +1183,30 @@ onUnmounted(() => {
 
 .multi-select-item {
   min-width: 200px;
+  max-width: 280px;
 }
 
 .multi-select-container {
   position: relative;
-  width: 220px;
+  width: 100%;
+  max-width: 280px;
 }
 
 .selected-tags {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  padding: 4px 6px;
+  padding: 2px 6px;
   border: 1px solid #E5E9F2;
   border-radius: 4px;
   background: white;
+  height: 32px;
   min-height: 32px;
+  max-height: 32px;
+  overflow: hidden;
   cursor: text;
+  box-sizing: border-box;
 }
 
 .tag {
@@ -1032,6 +1218,24 @@ onUnmounted(() => {
   border-radius: 3px;
   font-size: 12px;
   color: #2c3e50;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 118px;
+}
+
+.tag-shrink {
+  flex-shrink: 0;
+}
+
+.tag-more {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  background-color: #f0f2f5;
+  color: #606266;
+  cursor: default;
+  flex-shrink: 0;
 }
 
 .tag-remove {
@@ -1048,11 +1252,12 @@ onUnmounted(() => {
 }
 
 .multi-input {
-  flex: 1;
-  min-width: 60px;
+  flex: 1 1 48px;
+  min-width: 48px;
+  width: 0;
   border: none;
   outline: none;
-  padding: 4px 6px;
+  padding: 2px 4px;
   font-size: 13px;
   background: transparent;
 }
@@ -1087,6 +1292,16 @@ onUnmounted(() => {
 .dropdown-item:hover {
   background-color: #F5F7FA;
   color: #4A7A9C;
+}
+
+.dropdown-item--selected {
+  color: #a8abb2;
+  background-color: #f5f7fa;
+}
+
+.dropdown-item--selected:hover {
+  background-color: #ebeef5;
+  color: #909399;
 }
 
 .btn {
@@ -1221,6 +1436,45 @@ onUnmounted(() => {
 
 .data-table tbody tr:hover {
   background-color: #F5F7FA;
+}
+
+.chart-summary-hint {
+  font-size: 12px;
+  color: #64748b;
+  margin: 0 0 12px;
+}
+
+.chart-summary-table-wrap {
+  max-width: 100%;
+}
+
+.chart-summary-table {
+  min-width: max-content;
+}
+
+.chart-summary-table .sticky-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.06);
+}
+
+.chart-summary-table thead .sticky-col {
+  background: #E8F0F8;
+  z-index: 2;
+}
+
+.chart-summary-table tbody tr.row-total .sticky-col {
+  background: #f0f7ff;
+}
+
+.chart-summary-table tbody tr:hover .sticky-col {
+  background: #F5F7FA;
+}
+
+.chart-summary-table tbody tr.row-total:hover .sticky-col {
+  background: #e8f2fc;
 }
 
 .empty-data {

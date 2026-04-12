@@ -43,18 +43,23 @@
             <label>大区经理</label>
             <div class="multi-select-container">
               <div class="selected-tags" @click="focusManagerInput">
-                <span v-for="item in managerSelectedManagers" :key="item" class="tag">
+                <span v-for="item in mfManagersTagsPreview" :key="item" class="tag tag-shrink">
                   {{ item }}
                   <button type="button" class="tag-remove" @click.stop="removeManager(item)">×</button>
                 </span>
+                <span
+                  v-if="mfManagersTagsMore > 0"
+                  class="tag tag-more tag-shrink"
+                  :title="'还有：' + mfManagersTagsRest.join('、')"
+                >+{{ mfManagersTagsMore }}</span>
                 <input 
                   ref="managerInputRef"
                   v-model="managerSearchText"
                   type="text"
                   class="multi-input"
                   placeholder="搜索并选择"
-                  @input="filterManagerOptions"
-                  @focus="managerDropdownVisible = true"
+                  @input="onManagerSearchInput"
+                  @focus="onManagerFocus"
                   @blur="closeManagerDropdown"
                   @keydown.enter="handleManagerKeydown"
                 />
@@ -64,7 +69,8 @@
                   v-for="item in filteredManagerOptions" 
                   :key="item"
                   class="dropdown-item"
-                  @click="addManager(item)"
+                  :class="{ 'dropdown-item--selected': managerSelectedManagers.includes(item) }"
+                  @click="onManagerDropdownPick(item)"
                 >
                   {{ item }}
                 </div>
@@ -77,18 +83,23 @@
             <label>冶炼厂</label>
             <div class="multi-select-container">
               <div class="selected-tags" @click="focusSmelterInput">
-                <span v-for="item in managerSelectedSmelters" :key="item" class="tag">
+                <span v-for="item in mfSmeltersTagsPreview" :key="item" class="tag tag-shrink">
                   {{ item }}
                   <button type="button" class="tag-remove" @click.stop="removeSmelter(item)">×</button>
                 </span>
+                <span
+                  v-if="mfSmeltersTagsMore > 0"
+                  class="tag tag-more tag-shrink"
+                  :title="'还有：' + mfSmeltersTagsRest.join('、')"
+                >+{{ mfSmeltersTagsMore }}</span>
                 <input 
                   ref="smelterInputRef"
                   v-model="smelterSearchText"
                   type="text"
                   class="multi-input"
                   placeholder="搜索并选择"
-                  @input="filterSmelterOptions"
-                  @focus="smelterDropdownVisible = true"
+                  @input="onSmelterSearchInput"
+                  @focus="onSmelterFocus"
                   @blur="closeSmelterDropdown"
                   @keydown.enter="handleSmelterKeydown"
                 />
@@ -98,7 +109,8 @@
                   v-for="item in filteredSmelterOptions" 
                   :key="item"
                   class="dropdown-item"
-                  @click="addSmelter(item)"
+                  :class="{ 'dropdown-item--selected': managerSelectedSmelters.includes(item) }"
+                  @click="onSmelterDropdownPick(item)"
                 >
                   {{ item }}
                 </div>
@@ -178,18 +190,23 @@
             <label>仓库</label>
             <div class="multi-select-container">
               <div class="selected-tags" @click="focusWarehouseInput">
-                <span v-for="item in warehouseSelectedWarehouses" :key="item" class="tag">
+                <span v-for="item in wfWarehousesTagsPreview" :key="item" class="tag tag-shrink">
                   {{ item }}
                   <button type="button" class="tag-remove" @click.stop="removeWarehouse(item)">×</button>
                 </span>
+                <span
+                  v-if="wfWarehousesTagsMore > 0"
+                  class="tag tag-more tag-shrink"
+                  :title="'还有：' + wfWarehousesTagsRest.join('、')"
+                >+{{ wfWarehousesTagsMore }}</span>
                 <input 
                   ref="warehouseInputRef"
                   v-model="warehouseSearchText"
                   type="text"
                   class="multi-input"
                   placeholder="搜索并选择"
-                  @input="filterWarehouseOptions"
-                  @focus="warehouseDropdownVisible = true"
+                  @input="onWarehouseSearchInput"
+                  @focus="onWarehouseFocus"
                   @blur="closeWarehouseDropdown"
                   @keydown.enter="handleWarehouseKeydown"
                 />
@@ -199,7 +216,8 @@
                   v-for="item in filteredWarehouseOptions" 
                   :key="item"
                   class="dropdown-item"
-                  @click="addWarehouse(item)"
+                  :class="{ 'dropdown-item--selected': warehouseSelectedWarehouses.includes(item) }"
+                  @click="onWarehouseDropdownPick(item)"
                 >
                   {{ item }}
                 </div>
@@ -212,18 +230,23 @@
             <label>大区经理</label>
             <div class="multi-select-container">
               <div class="selected-tags" @click="focusWarehouseManagerInput">
-                <span v-for="item in warehouseSelectedManagers" :key="item" class="tag">
+                <span v-for="item in wfManagersTagsPreview" :key="item" class="tag tag-shrink">
                   {{ item }}
                   <button type="button" class="tag-remove" @click.stop="removeWarehouseManager(item)">×</button>
                 </span>
+                <span
+                  v-if="wfManagersTagsMore > 0"
+                  class="tag tag-more tag-shrink"
+                  :title="'还有：' + wfManagersTagsRest.join('、')"
+                >+{{ wfManagersTagsMore }}</span>
                 <input 
                   ref="warehouseManagerInputRef"
                   v-model="warehouseManagerSearchText"
                   type="text"
                   class="multi-input"
                   placeholder="搜索并选择"
-                  @input="filterWarehouseManagerOptions"
-                  @focus="warehouseManagerDropdownVisible = true"
+                  @input="onWarehouseManagerSearchInput"
+                  @focus="onWarehouseManagerFocus"
                   @blur="closeWarehouseManagerDropdown"
                   @keydown.enter="handleWarehouseManagerKeydown"
                 />
@@ -233,7 +256,8 @@
                   v-for="item in filteredWarehouseManagerOptions" 
                   :key="item"
                   class="dropdown-item"
-                  @click="addWarehouseManager(item)"
+                  :class="{ 'dropdown-item--selected': warehouseSelectedManagers.includes(item) }"
+                  @click="onWarehouseManagerDropdownPick(item)"
                 >
                   {{ item }}
                 </div>
@@ -246,18 +270,23 @@
             <label>冶炼厂</label>
             <div class="multi-select-container">
               <div class="selected-tags" @click="focusWarehouseSmelterInput">
-                <span v-for="item in warehouseSelectedSmelters" :key="item" class="tag">
+                <span v-for="item in wfSmeltersTagsPreview" :key="item" class="tag tag-shrink">
                   {{ item }}
                   <button type="button" class="tag-remove" @click.stop="removeWarehouseSmelter(item)">×</button>
                 </span>
+                <span
+                  v-if="wfSmeltersTagsMore > 0"
+                  class="tag tag-more tag-shrink"
+                  :title="'还有：' + wfSmeltersTagsRest.join('、')"
+                >+{{ wfSmeltersTagsMore }}</span>
                 <input 
                   ref="warehouseSmelterInputRef"
                   v-model="warehouseSmelterSearchText"
                   type="text"
                   class="multi-input"
                   placeholder="搜索并选择"
-                  @input="filterWarehouseSmelterOptions"
-                  @focus="warehouseSmelterDropdownVisible = true"
+                  @input="onWarehouseSmelterSearchInput"
+                  @focus="onWarehouseSmelterFocus"
                   @blur="closeWarehouseSmelterDropdown"
                   @keydown.enter="handleWarehouseSmelterKeydown"
                 />
@@ -267,7 +296,8 @@
                   v-for="item in filteredWarehouseSmelterOptions" 
                   :key="item"
                   class="dropdown-item"
-                  @click="addWarehouseSmelter(item)"
+                  :class="{ 'dropdown-item--selected': warehouseSelectedSmelters.includes(item) }"
+                  @click="onWarehouseSmelterDropdownPick(item)"
                 >
                   {{ item }}
                 </div>
@@ -355,11 +385,9 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import axios from 'axios'
-
-// ==================== 配置 ====================
-const API_BASE_URL = 'http://111.229.25.160:8001'
+import { ApiPaths } from '../api/paths'
 
 // ==================== 类型定义 ====================
 interface RawRecord {
@@ -428,7 +456,33 @@ const managerDateColumns = ref<string[]>([])
 
 // 表格行数据
 const managerTableRows = ref<ManagerTableRow[]>([])
-const managerDisplayRows = ref<any[]>([])
+
+/** 分页后的行 + 大区经理列合并（与模板 showManager / managerRowspan 对应） */
+const managerDisplayRows = computed(() => {
+  const rows = managerPaginatedRows.value
+  const sorted = [...rows].sort((a, b) => {
+    const c = a.regional_manager.localeCompare(b.regional_manager, 'zh-CN')
+    if (c !== 0) return c
+    return a.smelter.localeCompare(b.smelter, 'zh-CN')
+  })
+  const out: Array<ManagerTableRow & { showManager: boolean; managerRowspan: number }> = []
+  let i = 0
+  while (i < sorted.length) {
+    const mgr = sorted[i].regional_manager
+    let j = i + 1
+    while (j < sorted.length && sorted[j].regional_manager === mgr) j++
+    const span = j - i
+    for (let k = i; k < j; k++) {
+      out.push({
+        ...sorted[k],
+        showManager: k === i,
+        managerRowspan: span
+      })
+    }
+    i = j
+  }
+  return out
+})
 
 // 筛选条件
 const managerSelectedManagers = ref<string[]>([])
@@ -464,15 +518,16 @@ const isManagerAllSelected = computed(() => {
   return managerPaginatedRows.value.length > 0 && managerSelectedRows.value.length === managerPaginatedRows.value.length
 })
 
+/** 下拉按搜索过滤；已选项仍显示在列表中，用样式标灰 */
+function filterOptionsBySearch(options: string[], searchLower: string) {
+  if (!searchLower) return [...options]
+  return options.filter((opt) => opt.toLowerCase().includes(searchLower))
+}
+
 // 大区经理多选逻辑
 const filterManagerOptions = () => {
   const search = managerSearchText.value.toLowerCase()
-  if (search) {
-    filteredManagerOptions.value = allManagerOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredManagerOptions.value = [...allManagerOptions.value]
-  }
-  managerDropdownVisible.value = filteredManagerOptions.value.length > 0
+  filteredManagerOptions.value = filterOptionsBySearch(allManagerOptions.value, search)
 }
 
 const addManager = (item: string) => {
@@ -485,6 +540,12 @@ const addManager = (item: string) => {
 
 const removeManager = (item: string) => {
   managerSelectedManagers.value = managerSelectedManagers.value.filter(i => i !== item)
+  filterManagerOptions()
+}
+
+function onManagerDropdownPick(item: string) {
+  if (managerSelectedManagers.value.includes(item)) removeManager(item)
+  else addManager(item)
 }
 
 const handleManagerKeydown = (e: KeyboardEvent) => {
@@ -500,19 +561,26 @@ const closeManagerDropdown = () => {
   }, 200)
 }
 
+function onManagerFocus() {
+  managerDropdownVisible.value = true
+  filterManagerOptions()
+}
+
+function onManagerSearchInput() {
+  managerDropdownVisible.value = true
+  filterManagerOptions()
+}
+
 const focusManagerInput = () => {
-  managerInputRef.value?.focus()
+  managerDropdownVisible.value = true
+  filterManagerOptions()
+  nextTick(() => managerInputRef.value?.focus())
 }
 
 // 冶炼厂多选逻辑
 const filterSmelterOptions = () => {
   const search = smelterSearchText.value.toLowerCase()
-  if (search) {
-    filteredSmelterOptions.value = allSmelterOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredSmelterOptions.value = [...allSmelterOptions.value]
-  }
-  smelterDropdownVisible.value = filteredSmelterOptions.value.length > 0
+  filteredSmelterOptions.value = filterOptionsBySearch(allSmelterOptions.value, search)
 }
 
 const addSmelter = (item: string) => {
@@ -525,6 +593,12 @@ const addSmelter = (item: string) => {
 
 const removeSmelter = (item: string) => {
   managerSelectedSmelters.value = managerSelectedSmelters.value.filter(i => i !== item)
+  filterSmelterOptions()
+}
+
+function onSmelterDropdownPick(item: string) {
+  if (managerSelectedSmelters.value.includes(item)) removeSmelter(item)
+  else addSmelter(item)
 }
 
 const handleSmelterKeydown = (e: KeyboardEvent) => {
@@ -540,8 +614,20 @@ const closeSmelterDropdown = () => {
   }, 200)
 }
 
+function onSmelterFocus() {
+  smelterDropdownVisible.value = true
+  filterSmelterOptions()
+}
+
+function onSmelterSearchInput() {
+  smelterDropdownVisible.value = true
+  filterSmelterOptions()
+}
+
 const focusSmelterInput = () => {
-  smelterInputRef.value?.focus()
+  smelterDropdownVisible.value = true
+  filterSmelterOptions()
+  nextTick(() => smelterInputRef.value?.focus())
 }
 
 // 按大区经理查询
@@ -573,7 +659,7 @@ async function queryManagerData() {
     
     console.log('请求参数:', params)
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
+    const response = await axios.get(ApiPaths.deliveryHistory, { params })
     
     const data = response.data as ApiResponse
     const items = data.items || []
@@ -581,8 +667,8 @@ async function queryManagerData() {
     // 更新下拉选项
     allManagerOptions.value = [...new Set(items.map((item: RawRecord) => item.regional_manager).filter(Boolean))]
     allSmelterOptions.value = [...new Set(items.map((item: RawRecord) => item.smelter || '').filter(Boolean))]
-    filteredManagerOptions.value = [...allManagerOptions.value]
-    filteredSmelterOptions.value = [...allSmelterOptions.value]
+    filterManagerOptions()
+    filterSmelterOptions()
     
     // 获取所有日期
     const dates = [...new Set(items.map(item => item.delivery_date))].sort()
@@ -679,7 +765,35 @@ const warehouseDateColumns = ref<string[]>([])
 
 // 表格行数据
 const warehouseTableRows = ref<WarehouseTableRow[]>([])
-const warehouseDisplayRows = ref<any[]>([])
+
+/** 分页后的行 + 仓库列合并（与模板 showWarehouse / warehouseRowspan 对应） */
+const warehouseDisplayRows = computed(() => {
+  const rows = warehousePaginatedRows.value
+  const sorted = [...rows].sort((a, b) => {
+    const c = a.warehouse.localeCompare(b.warehouse, 'zh-CN')
+    if (c !== 0) return c
+    const d = a.regional_manager.localeCompare(b.regional_manager, 'zh-CN')
+    if (d !== 0) return d
+    return a.smelter.localeCompare(b.smelter, 'zh-CN')
+  })
+  const out: Array<WarehouseTableRow & { showWarehouse: boolean; warehouseRowspan: number }> = []
+  let i = 0
+  while (i < sorted.length) {
+    const wh = sorted[i].warehouse
+    let j = i + 1
+    while (j < sorted.length && sorted[j].warehouse === wh) j++
+    const span = j - i
+    for (let k = i; k < j; k++) {
+      out.push({
+        ...sorted[k],
+        showWarehouse: k === i,
+        warehouseRowspan: span
+      })
+    }
+    i = j
+  }
+  return out
+})
 
 // 筛选条件
 const warehouseSelectedWarehouses = ref<string[]>([])
@@ -707,6 +821,29 @@ const warehouseSmelterDropdownVisible = ref(false)
 const warehouseSmelterInputRef = ref<HTMLInputElement>()
 const filteredWarehouseSmelterOptions = ref<string[]>([])
 
+/** 与送货预测页一致：单行展示，仅 1 个标签 +「+N」 */
+const MULTI_PREVIEW_TAG_COUNT = 1
+
+const mfManagersTagsPreview = computed(() => managerSelectedManagers.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const mfManagersTagsMore = computed(() => Math.max(0, managerSelectedManagers.value.length - MULTI_PREVIEW_TAG_COUNT))
+const mfManagersTagsRest = computed(() => managerSelectedManagers.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
+const mfSmeltersTagsPreview = computed(() => managerSelectedSmelters.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const mfSmeltersTagsMore = computed(() => Math.max(0, managerSelectedSmelters.value.length - MULTI_PREVIEW_TAG_COUNT))
+const mfSmeltersTagsRest = computed(() => managerSelectedSmelters.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
+const wfWarehousesTagsPreview = computed(() => warehouseSelectedWarehouses.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const wfWarehousesTagsMore = computed(() => Math.max(0, warehouseSelectedWarehouses.value.length - MULTI_PREVIEW_TAG_COUNT))
+const wfWarehousesTagsRest = computed(() => warehouseSelectedWarehouses.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
+const wfManagersTagsPreview = computed(() => warehouseSelectedManagers.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const wfManagersTagsMore = computed(() => Math.max(0, warehouseSelectedManagers.value.length - MULTI_PREVIEW_TAG_COUNT))
+const wfManagersTagsRest = computed(() => warehouseSelectedManagers.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
+const wfSmeltersTagsPreview = computed(() => warehouseSelectedSmelters.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
+const wfSmeltersTagsMore = computed(() => Math.max(0, warehouseSelectedSmelters.value.length - MULTI_PREVIEW_TAG_COUNT))
+const wfSmeltersTagsRest = computed(() => warehouseSelectedSmelters.value.slice(MULTI_PREVIEW_TAG_COUNT))
+
 const warehouseTotalPages = computed(() => Math.max(1, Math.ceil(warehouseTableRows.value.length / warehousePageSize.value)))
 const warehousePaginatedRows = computed(() => {
   const start = (warehouseCurrentPage.value - 1) * warehousePageSize.value
@@ -723,12 +860,7 @@ const isWarehouseAllSelected = computed(() => {
 // 仓库多选逻辑
 const filterWarehouseOptions = () => {
   const search = warehouseSearchText.value.toLowerCase()
-  if (search) {
-    filteredWarehouseOptions.value = allWarehouseOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-  }
-  warehouseDropdownVisible.value = filteredWarehouseOptions.value.length > 0
+  filteredWarehouseOptions.value = filterOptionsBySearch(allWarehouseOptions.value, search)
 }
 
 const addWarehouse = (item: string) => {
@@ -741,6 +873,12 @@ const addWarehouse = (item: string) => {
 
 const removeWarehouse = (item: string) => {
   warehouseSelectedWarehouses.value = warehouseSelectedWarehouses.value.filter(i => i !== item)
+  filterWarehouseOptions()
+}
+
+function onWarehouseDropdownPick(item: string) {
+  if (warehouseSelectedWarehouses.value.includes(item)) removeWarehouse(item)
+  else addWarehouse(item)
 }
 
 const handleWarehouseKeydown = (e: KeyboardEvent) => {
@@ -756,19 +894,26 @@ const closeWarehouseDropdown = () => {
   }, 200)
 }
 
+function onWarehouseFocus() {
+  warehouseDropdownVisible.value = true
+  filterWarehouseOptions()
+}
+
+function onWarehouseSearchInput() {
+  warehouseDropdownVisible.value = true
+  filterWarehouseOptions()
+}
+
 const focusWarehouseInput = () => {
-  warehouseInputRef.value?.focus()
+  warehouseDropdownVisible.value = true
+  filterWarehouseOptions()
+  nextTick(() => warehouseInputRef.value?.focus())
 }
 
 // 大区经理多选逻辑
 const filterWarehouseManagerOptions = () => {
   const search = warehouseManagerSearchText.value.toLowerCase()
-  if (search) {
-    filteredWarehouseManagerOptions.value = allManagerOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredWarehouseManagerOptions.value = [...allManagerOptions.value]
-  }
-  warehouseManagerDropdownVisible.value = filteredWarehouseManagerOptions.value.length > 0
+  filteredWarehouseManagerOptions.value = filterOptionsBySearch(allManagerOptions.value, search)
 }
 
 const addWarehouseManager = (item: string) => {
@@ -781,6 +926,12 @@ const addWarehouseManager = (item: string) => {
 
 const removeWarehouseManager = (item: string) => {
   warehouseSelectedManagers.value = warehouseSelectedManagers.value.filter(i => i !== item)
+  filterWarehouseManagerOptions()
+}
+
+function onWarehouseManagerDropdownPick(item: string) {
+  if (warehouseSelectedManagers.value.includes(item)) removeWarehouseManager(item)
+  else addWarehouseManager(item)
 }
 
 const handleWarehouseManagerKeydown = (e: KeyboardEvent) => {
@@ -796,19 +947,26 @@ const closeWarehouseManagerDropdown = () => {
   }, 200)
 }
 
+function onWarehouseManagerFocus() {
+  warehouseManagerDropdownVisible.value = true
+  filterWarehouseManagerOptions()
+}
+
+function onWarehouseManagerSearchInput() {
+  warehouseManagerDropdownVisible.value = true
+  filterWarehouseManagerOptions()
+}
+
 const focusWarehouseManagerInput = () => {
-  warehouseManagerInputRef.value?.focus()
+  warehouseManagerDropdownVisible.value = true
+  filterWarehouseManagerOptions()
+  nextTick(() => warehouseManagerInputRef.value?.focus())
 }
 
 // 冶炼厂多选逻辑
 const filterWarehouseSmelterOptions = () => {
   const search = warehouseSmelterSearchText.value.toLowerCase()
-  if (search) {
-    filteredWarehouseSmelterOptions.value = allSmelterOptions.value.filter(opt => opt.toLowerCase().includes(search))
-  } else {
-    filteredWarehouseSmelterOptions.value = [...allSmelterOptions.value]
-  }
-  warehouseSmelterDropdownVisible.value = filteredWarehouseSmelterOptions.value.length > 0
+  filteredWarehouseSmelterOptions.value = filterOptionsBySearch(allSmelterOptions.value, search)
 }
 
 const addWarehouseSmelter = (item: string) => {
@@ -821,6 +979,12 @@ const addWarehouseSmelter = (item: string) => {
 
 const removeWarehouseSmelter = (item: string) => {
   warehouseSelectedSmelters.value = warehouseSelectedSmelters.value.filter(i => i !== item)
+  filterWarehouseSmelterOptions()
+}
+
+function onWarehouseSmelterDropdownPick(item: string) {
+  if (warehouseSelectedSmelters.value.includes(item)) removeWarehouseSmelter(item)
+  else addWarehouseSmelter(item)
 }
 
 const handleWarehouseSmelterKeydown = (e: KeyboardEvent) => {
@@ -836,8 +1000,20 @@ const closeWarehouseSmelterDropdown = () => {
   }, 200)
 }
 
+function onWarehouseSmelterFocus() {
+  warehouseSmelterDropdownVisible.value = true
+  filterWarehouseSmelterOptions()
+}
+
+function onWarehouseSmelterSearchInput() {
+  warehouseSmelterDropdownVisible.value = true
+  filterWarehouseSmelterOptions()
+}
+
 const focusWarehouseSmelterInput = () => {
-  warehouseSmelterInputRef.value?.focus()
+  warehouseSmelterDropdownVisible.value = true
+  filterWarehouseSmelterOptions()
+  nextTick(() => warehouseSmelterInputRef.value?.focus())
 }
 
 // 按仓库查询
@@ -870,7 +1046,7 @@ async function queryWarehouseData() {
     
     console.log('请求参数:', params)
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
+    const response = await axios.get(ApiPaths.deliveryHistory, { params })
     // ...
   
     const data = response.data as ApiResponse
@@ -880,9 +1056,9 @@ async function queryWarehouseData() {
     allWarehouseOptions.value = [...new Set(items.map((item: RawRecord) => item.warehouse).filter(Boolean))]
     allManagerOptions.value = [...new Set(items.map((item: RawRecord) => item.regional_manager).filter(Boolean))]
     allSmelterOptions.value = [...new Set(items.map((item: RawRecord) => item.smelter || '').filter(Boolean))]
-    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-    filteredWarehouseManagerOptions.value = [...allManagerOptions.value]
-    filteredWarehouseSmelterOptions.value = [...allSmelterOptions.value]
+    filterWarehouseOptions()
+    filterWarehouseManagerOptions()
+    filterWarehouseSmelterOptions()
     
     // 获取所有日期
     const dates = [...new Set(items.map(item => item.delivery_date))].sort()
@@ -977,17 +1153,103 @@ function handleGlobalSearch() {
   }
 }
 
-// 监听分页变化
-watch([managerCurrentPage, managerPageSize], () => {
-  // 分页变化时重新计算显示行
-})
-watch([warehouseCurrentPage, warehousePageSize], () => {
-  // 分页变化时重新计算显示行
-})
+// ==================== 筛选条件本地记忆（切换页面后再进来自动恢复） ====================
+const HISTORY_QUERY_STORAGE_KEY = 'historyQuery.filters.v1'
+
+interface HistoryQueryPersisted {
+  activeTab: string
+  globalSearch: string
+  managerFilters: { startDate: string; endDate: string }
+  managerSelectedManagers: string[]
+  managerSelectedSmelters: string[]
+  warehouseFilters: { startDate: string; endDate: string }
+  warehouseSelectedWarehouses: string[]
+  warehouseSelectedManagers: string[]
+  warehouseSelectedSmelters: string[]
+}
+
+function loadPersistedHistoryQuery() {
+  try {
+    const raw = localStorage.getItem(HISTORY_QUERY_STORAGE_KEY)
+    if (!raw) return
+    const s = JSON.parse(raw) as Partial<HistoryQueryPersisted>
+    if (s.activeTab === 'warehouse' || s.activeTab === 'manager') activeTab.value = s.activeTab
+    if (typeof s.globalSearch === 'string') globalSearch.value = s.globalSearch
+    if (s.managerFilters) {
+      managerFilters.value = {
+        startDate: typeof s.managerFilters.startDate === 'string' ? s.managerFilters.startDate : '',
+        endDate: typeof s.managerFilters.endDate === 'string' ? s.managerFilters.endDate : ''
+      }
+    }
+    if (Array.isArray(s.managerSelectedManagers)) managerSelectedManagers.value = [...s.managerSelectedManagers]
+    if (Array.isArray(s.managerSelectedSmelters)) managerSelectedSmelters.value = [...s.managerSelectedSmelters]
+    if (s.warehouseFilters) {
+      warehouseFilters.value = {
+        startDate: typeof s.warehouseFilters.startDate === 'string' ? s.warehouseFilters.startDate : '',
+        endDate: typeof s.warehouseFilters.endDate === 'string' ? s.warehouseFilters.endDate : ''
+      }
+    }
+    if (Array.isArray(s.warehouseSelectedWarehouses)) warehouseSelectedWarehouses.value = [...s.warehouseSelectedWarehouses]
+    if (Array.isArray(s.warehouseSelectedManagers)) warehouseSelectedManagers.value = [...s.warehouseSelectedManagers]
+    if (Array.isArray(s.warehouseSelectedSmelters)) warehouseSelectedSmelters.value = [...s.warehouseSelectedSmelters]
+  } catch {
+    /* ignore */
+  }
+}
+
+function savePersistedHistoryQuery() {
+  try {
+    const payload: HistoryQueryPersisted = {
+      activeTab: activeTab.value,
+      globalSearch: globalSearch.value,
+      managerFilters: { ...managerFilters.value },
+      managerSelectedManagers: [...managerSelectedManagers.value],
+      managerSelectedSmelters: [...managerSelectedSmelters.value],
+      warehouseFilters: { ...warehouseFilters.value },
+      warehouseSelectedWarehouses: [...warehouseSelectedWarehouses.value],
+      warehouseSelectedManagers: [...warehouseSelectedManagers.value],
+      warehouseSelectedSmelters: [...warehouseSelectedSmelters.value]
+    }
+    localStorage.setItem(HISTORY_QUERY_STORAGE_KEY, JSON.stringify(payload))
+  } catch {
+    /* ignore */
+  }
+}
+
+let persistDebounce: ReturnType<typeof setTimeout> | null = null
+function schedulePersistHistoryQuery() {
+  if (persistDebounce) clearTimeout(persistDebounce)
+  persistDebounce = setTimeout(() => {
+    persistDebounce = null
+    savePersistedHistoryQuery()
+  }, 400)
+}
+
+watch(
+  [
+    activeTab,
+    globalSearch,
+    managerFilters,
+    managerSelectedManagers,
+    managerSelectedSmelters,
+    warehouseFilters,
+    warehouseSelectedWarehouses,
+    warehouseSelectedManagers,
+    warehouseSelectedSmelters
+  ],
+  schedulePersistHistoryQuery,
+  { deep: true }
+)
 
 onMounted(() => {
+  loadPersistedHistoryQuery()
   queryManagerData()
   queryWarehouseData()
+})
+
+onBeforeUnmount(() => {
+  if (persistDebounce) clearTimeout(persistDebounce)
+  savePersistedHistoryQuery()
 })
 </script>
 
@@ -1046,7 +1308,7 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 16px;
-  align-items: flex-end;
+  align-items: center;
 }
 
 .filter-item {
@@ -1079,30 +1341,37 @@ onMounted(() => {
 .filter-actions {
   display: flex;
   gap: 10px;
+  flex-shrink: 0;
   margin-left: auto;
 }
 
-/* 多选组件样式 */
+/* 多选组件样式（与送货量预测页一致：单行固定高度 + 首标签 +「+N」） */
 .multi-select-item {
-  min-width: 180px;
+  min-width: 200px;
+  max-width: 280px;
 }
 
 .multi-select-container {
   position: relative;
-  width: 200px;
+  width: 100%;
+  max-width: 280px;
 }
 
 .selected-tags {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
-  padding: 4px 6px;
+  padding: 2px 6px;
   border: 1px solid #E5E9F2;
   border-radius: 4px;
   background: white;
+  height: 32px;
   min-height: 32px;
+  max-height: 32px;
+  overflow: hidden;
   cursor: text;
+  box-sizing: border-box;
 }
 
 .tag {
@@ -1114,6 +1383,24 @@ onMounted(() => {
   border-radius: 3px;
   font-size: 12px;
   color: #2c3e50;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 118px;
+}
+
+.tag-shrink {
+  flex-shrink: 0;
+}
+
+.tag-more {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  background-color: #f0f2f5;
+  color: #606266;
+  cursor: default;
+  flex-shrink: 0;
 }
 
 .tag-remove {
@@ -1130,11 +1417,12 @@ onMounted(() => {
 }
 
 .multi-input {
-  flex: 1;
-  min-width: 60px;
+  flex: 1 1 48px;
+  min-width: 48px;
+  width: 0;
   border: none;
   outline: none;
-  padding: 4px 6px;
+  padding: 2px 4px;
   font-size: 13px;
   background: transparent;
 }
@@ -1169,6 +1457,16 @@ onMounted(() => {
 .dropdown-item:hover {
   background-color: #F5F7FA;
   color: #4A7A9C;
+}
+
+.dropdown-item--selected {
+  color: #a8abb2;
+  background-color: #f5f7fa;
+}
+
+.dropdown-item--selected:hover {
+  background-color: #ebeef5;
+  color: #909399;
 }
 
 .btn {
