@@ -999,15 +999,15 @@ onMounted(() => {
 .batch-bar { display: flex; justify-content: flex-start; }
 .btn { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
 .btn-primary { background-color: #1677d6; color: white; }
-.btn-primary:hover { background-color: #2288EE; }
+.btn-primary:hover { background-color: #1677dE; }
 .btn-secondary { background-color: #F5F7FA; color: #606266; border: 1px solid #E5E9F2; }
 .btn-secondary:hover { background-color: #E5E9F2; }
 .btn-sm { padding: 4px 12px; font-size: 12px; }
 .btn-danger { background-color: #f56c6c; color: white; }
 .btn-danger:hover:not(:disabled) { background-color: #f78989; }
 .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-view { background: none; border: 1px solid #1677d6; color: #1677d6; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-.btn-view:hover { background-color: #1677d6; color: white; }
+.btn-view { background: none; border: 1px solid #1177DD; color: #1177DD; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.btn-view:hover { background-color: #1177DD; color: white; }
 .table-wrapper { overflow-x: auto; border: 1px solid #E5E9F2; border-radius: 4px; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th, .data-table td { padding: 10px 12px; text-align: center; border-bottom: 1px solid #E5E9F2; white-space: nowrap; }
