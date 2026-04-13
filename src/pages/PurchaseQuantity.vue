@@ -279,8 +279,8 @@
               <td>{{ row.regional_manager || '-' }}</td>
               <td>{{ row.warehouse || '-' }}</td>
               <td>{{ row.smelter || '-' }}</td>
-              <td>{{ row.product_variety || '-' }}</td>
-              <td>{{ parseFloat(row.predicted_weight).toFixed(2) }}</td>
+              <td>{{ row.details.map((d) => d.variety).join('、') || '-' }}</td>
+              <td>{{ row.total_weight.toFixed(2) }}</td>
               <td><button class="btn-view" @click="openDetailModal(row)">查看</button></td>
             </tr>
             <tr v-if="paginatedData.length === 0">
@@ -386,6 +386,7 @@ interface PredictDetail {
   smelter: string
   product_variety: string
   predicted_weight: string
+  regional_manager?: string
 }
 
 interface SummaryRow {
@@ -393,6 +394,7 @@ interface SummaryRow {
   target_date: string
   warehouse: string
   smelter: string
+  regional_manager?: string
   total_weight: number
   details: { variety: string; weight: number }[]
 }
@@ -438,6 +440,14 @@ const filters = ref({
   startDate: todayStr,
   endDate: getFutureDate(14)
 })
+
+// 大区经理多选
+const selectedManagers = ref<string[]>([])
+const managerSearchText = ref('')
+const managerDropdownVisible = ref(false)
+const managerInputRef = ref<HTMLInputElement>()
+const allManagerOptions = ref<string[]>([])
+const filteredManagerOptions = ref<string[]>([])
 
 // 仓库多选
 const selectedWarehouses = ref<string[]>([])
@@ -538,6 +548,7 @@ async function fetchOptions() {
     const data = response.data as { items: any[] }
     const items = data.items || []
     
+    allManagerOptions.value = [...new Set(items.map((item: any) => item.regional_manager))].filter(Boolean)
     allWarehouseOptions.value = [...new Set(items.map((item: any) => item.warehouse))].filter(Boolean)
     allSmelterOptions.value = [...new Set(items.map((item: any) => item.smelter))].filter(Boolean)
     allVarietyOptions.value = [...new Set(items.map((item: any) => item.product_variety))].filter(Boolean)
@@ -547,6 +558,7 @@ async function fetchOptions() {
     filterVarietyOptions()
   } catch (error) {
     console.error('获取选项失败', error)
+    allManagerOptions.value = ['华东经理', '华北经理']
     allWarehouseOptions.value = ['北京仓库', '上海仓库', '广州仓库']
     allSmelterOptions.value = ['金利', '豫光']
     allVarietyOptions.value = ['电解铜', '铝锭', '锌锭']
@@ -609,14 +621,6 @@ const focusManagerInput = () => {
   nextTick(() => managerInputRef.value?.focus())
 }
 
-=======
-    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
-    filteredSmelterOptions.value = [...allSmelterOptions.value]
-    filteredVarietyOptions.value = [...allVarietyOptions.value]
-  }
-}
-
->>>>>>> b4fabaa5ba2f0f27798866a5a12fb87dee468437
 // ==================== 仓库多选逻辑 ====================
 const filterWarehouseOptions = () => {
   const search = warehouseSearchText.value.toLowerCase()
@@ -912,26 +916,12 @@ function buildForecastFilterParams(): Record<string, any> {
   if (selectedVarieties.value.length > 0) {
     params.product_varieties = selectedVarieties.value
   }
+  if (selectedSmelters.value.length > 0) {
+    params.smelters = selectedSmelters.value
+  }
   return params
 }
 
-// ==================== 获取明细数据 ====================
-async function fetchDetailData() {
-  try {
-    const params: Record<string, any> = {
-      page: currentPage.value,
-      page_size: pageSize.value,
-      ...buildForecastFilterParams()
-    }
-
-    const response = await axios.get(ApiPaths.forecastDetail, { params })
-    const data = response.data as DetailResponse
-
-    if (data) {
-      detailData.value = data.items || []
-      detailTotal.value = data.total || 0
-    }
-=======
 // ==================== 判断品种是否被选中 ====================
 const isVarietySelected = (variety: string): boolean => {
   if (selectedVarieties.value.length === 0) return false
@@ -941,8 +931,8 @@ const isVarietySelected = (variety: string): boolean => {
 // ==================== 汇总数据（按日期+仓库+冶炼厂分组） ====================
 const aggregateData = (data: PredictDetail[]): SummaryRow[] => {
   const map = new Map<string, SummaryRow>()
-  
-  data.forEach(item => {
+
+  data.forEach((item) => {
     const key = `${item.target_date}|${item.warehouse}|${item.smelter}`
     if (!map.has(key)) {
       map.set(key, {
@@ -950,19 +940,20 @@ const aggregateData = (data: PredictDetail[]): SummaryRow[] => {
         target_date: item.target_date,
         warehouse: item.warehouse,
         smelter: item.smelter,
+        regional_manager: item.regional_manager,
         total_weight: 0,
-        details: []
+        details: [],
       })
     }
     const row = map.get(key)!
     const weight = parseFloat(item.predicted_weight)
-    row.total_weight += weight
+    if (!Number.isNaN(weight)) row.total_weight += weight
     row.details.push({
       variety: item.product_variety,
-      weight: weight
+      weight: Number.isNaN(weight) ? 0 : weight,
     })
   })
-  
+
   return Array.from(map.values()).sort((a, b) => {
     if (a.target_date !== b.target_date) return a.target_date.localeCompare(b.target_date)
     if (a.warehouse !== b.warehouse) return a.warehouse.localeCompare(b.warehouse)
@@ -970,177 +961,25 @@ const aggregateData = (data: PredictDetail[]): SummaryRow[] => {
   })
 }
 
-// ==================== 获取预测明细数据 ====================
+// ==================== 获取明细数据 ====================
 async function fetchDetailData() {
   try {
     const params: Record<string, any> = {
       page: 1,
       page_size: 500,
-      date_from: filters.value.startDate,
-      date_to: filters.value.endDate
+      ...buildForecastFilterParams(),
     }
-    
-    if (selectedWarehouses.value.length > 0) {
-      params.warehouses = selectedWarehouses.value
-    }
-    if (selectedSmelters.value.length > 0) {
-      params.smelters = selectedSmelters.value
-    }
-    if (selectedVarieties.value.length > 0) {
-      params.product_varieties = selectedVarieties.value
-    }
-    
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货量预测/明细`, { params })
-    const items = response.data?.items || []
-    
+
+    const response = await axios.get(ApiPaths.forecastDetail, { params })
+    const data = response.data as { items?: PredictDetail[] }
+    const items = data.items || []
+
     detailData.value = items
     summaryData.value = aggregateData(items)
-    
->>>>>>> b4fabaa5ba2f0f27798866a5a12fb87dee468437
   } catch (error: any) {
     console.error('获取明细失败', error)
     detailData.value = []
     summaryData.value = []
-  }
-}
-
-// ==================== 触发预测 ====================
-async function triggerPredict() {
-  loading.value = true
-  try {
-    const items = []
-    
-    // 获取默认值
-    const defaultWarehouse = allWarehouseOptions.value[0] || '北京仓库'
-    const defaultSmelter = allSmelterOptions.value[0] || '金利'
-    const defaultVariety = allVarietyOptions.value[0] || '电解铜'
-    
-    // 如果有选中的仓库、冶炼厂、品种
-    if (selectedWarehouses.value.length > 0 && selectedSmelters.value.length > 0 && selectedVarieties.value.length > 0) {
-      for (const warehouse of selectedWarehouses.value) {
-        for (const smelter of selectedSmelters.value) {
-          for (const variety of selectedVarieties.value) {
-            items.push({
-              warehouse: warehouse,
-              smelter: smelter,
-              product_variety: variety,  // 注意：使用 product_variety
-              horizon_days: 15,
-              prediction_start_date: filters.value.startDate,
-              use_cache: true
-            })
-          }
-        }
-      }
-    } 
-    // 只有仓库和冶炼厂
-    else if (selectedWarehouses.value.length > 0 && selectedSmelters.value.length > 0) {
-      for (const warehouse of selectedWarehouses.value) {
-        for (const smelter of selectedSmelters.value) {
-          items.push({
-            warehouse: warehouse,
-            smelter: smelter,
-            product_variety: defaultVariety,
-            horizon_days: 15,
-            prediction_start_date: filters.value.startDate,
-            use_cache: true
-          })
-        }
-      }
-    }
-    // 只有仓库和品种
-    else if (selectedWarehouses.value.length > 0 && selectedVarieties.value.length > 0) {
-      for (const warehouse of selectedWarehouses.value) {
-        for (const variety of selectedVarieties.value) {
-          items.push({
-            warehouse: warehouse,
-            smelter: defaultSmelter,
-            product_variety: variety,
-            horizon_days: 15,
-            prediction_start_date: filters.value.startDate,
-            use_cache: true
-          })
-        }
-      }
-    }
-    // 只有冶炼厂和品种
-    else if (selectedSmelters.value.length > 0 && selectedVarieties.value.length > 0) {
-      for (const smelter of selectedSmelters.value) {
-        for (const variety of selectedVarieties.value) {
-          items.push({
-            warehouse: defaultWarehouse,
-            smelter: smelter,
-            product_variety: variety,
-            horizon_days: 15,
-            prediction_start_date: filters.value.startDate,
-            use_cache: true
-          })
-        }
-      }
-    }
-    // 只有仓库
-    else if (selectedWarehouses.value.length > 0) {
-      for (const warehouse of selectedWarehouses.value) {
-        items.push({
-          warehouse: warehouse,
-          smelter: defaultSmelter,
-          product_variety: defaultVariety,
-          horizon_days: 15,
-          prediction_start_date: filters.value.startDate,
-          use_cache: true
-        })
-      }
-    }
-    // 只有冶炼厂
-    else if (selectedSmelters.value.length > 0) {
-      for (const smelter of selectedSmelters.value) {
-        items.push({
-          warehouse: defaultWarehouse,
-          smelter: smelter,
-          product_variety: defaultVariety,
-          horizon_days: 15,
-          prediction_start_date: filters.value.startDate,
-          use_cache: true
-        })
-      }
-    }
-    // 只有品种
-    else if (selectedVarieties.value.length > 0) {
-      for (const variety of selectedVarieties.value) {
-        items.push({
-          warehouse: defaultWarehouse,
-          smelter: defaultSmelter,
-          product_variety: variety,
-          horizon_days: 15,
-          prediction_start_date: filters.value.startDate,
-          use_cache: true
-        })
-      }
-    }
-    // 没有选择，使用默认值
-    else {
-      items.push({
-        warehouse: defaultWarehouse,
-        smelter: defaultSmelter,
-        product_variety: defaultVariety,
-        horizon_days: 15,
-        prediction_start_date: filters.value.startDate,
-        use_cache: true
-      })
-    }
-    
-    console.log('预测请求参数:', JSON.stringify({ items }, null, 2))
-    
-    const response = await axios.post(`${API_BASE_URL}/api/v1/预测`, { items })
-    console.log('预测响应:', response.data)
-    await new Promise(resolve => setTimeout(resolve, 1500))
-    
-  } catch (error: any) {
-    console.error('预测失败', error)
-    const errorMsg = error.response?.data?.message || error.message || '预测失败'
-    const errorDetail = error.response?.data?.detail
-    showError(errorMsg, errorDetail ? [errorDetail] : ['请检查请求参数是否正确'])
-  } finally {
-    loading.value = false
   }
 }
 
@@ -1182,9 +1021,11 @@ function handleReset() {
     startDate: todayStr,
     endDate: getFutureDate(14)
   }
+  selectedManagers.value = []
   selectedWarehouses.value = []
   selectedSmelters.value = []
   selectedVarieties.value = []
+  managerSearchText.value = ''
   warehouseSearchText.value = ''
   smelterSearchText.value = ''
   varietySearchText.value = ''
@@ -1427,38 +1268,44 @@ function closeModal() {
 
 // ==================== 导出主表格 ====================
 async function exportExcel() {
-  try {
-    const params: Record<string, any> = {
-      date_from: filters.value.startDate,
-      date_to: filters.value.endDate
-    }
-    
-    if (selectedManagers.value.length > 0) {
-      params.regional_managers = selectedManagers.value
-    }
-    if (selectedWarehouses.value.length > 0) {
-      params.warehouses = selectedWarehouses.value
-    }
-    if (selectedSmelters.value.length > 0) {
-      params.smelters = selectedSmelters.value
-    }
-    if (selectedVarieties.value.length > 0) {
-      params.product_varieties = selectedVarieties.value
-    }
-    
-    const response = await axios.get(ApiPaths.forecastExport, {
-      params,
-      responseType: 'blob'
-    })
-    
-    const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-    const link = document.createElement('a')
-    const timestamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)
-    link.href = URL.createObjectURL(blob)
-    link.download = `送货量预测_${timestamp}.xlsx`
-    link.click()
-    URL.revokeObjectURL(link.href)
+  const params: Record<string, any> = {
+    date_from: filters.value.startDate,
+    date_to: filters.value.endDate,
   }
+
+  if (selectedManagers.value.length > 0) {
+    params.regional_managers = selectedManagers.value
+  }
+  if (selectedWarehouses.value.length > 0) {
+    params.warehouses = selectedWarehouses.value
+  }
+  if (selectedSmelters.value.length > 0) {
+    params.smelters = selectedSmelters.value
+  }
+  if (selectedVarieties.value.length > 0) {
+    params.product_varieties = selectedVarieties.value
+  }
+
+  const response = await axios
+    .get(ApiPaths.forecastExport, { params, responseType: 'blob' })
+    .catch((e: unknown) => {
+      const err = e as { response?: { data?: { message?: string } }; message?: string }
+      console.error('导出失败', e)
+      showError(err?.response?.data?.message || err?.message || '导出失败', [])
+      return null
+    })
+
+  if (!response) return
+
+  const blob = new Blob([response.data], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  })
+  const link = document.createElement('a')
+  const timestamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)
+  link.href = URL.createObjectURL(blob)
+  link.download = `送货量预测_${timestamp}.xlsx`
+  link.click()
+  URL.revokeObjectURL(link.href)
 }
 
 

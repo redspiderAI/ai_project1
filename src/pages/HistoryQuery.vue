@@ -451,6 +451,12 @@ const managerCurrentPage = ref(1)
 const managerPageSize = ref(10)
 const managerSelectedRows = ref<string[]>([])
 
+const managerFilters = ref({ startDate: '', endDate: '' })
+const managerSearchText = ref('')
+const managerDropdownVisible = ref(false)
+const managerSelectedManagers = ref<string[]>([])
+const managerSelectedSmelters = ref<string[]>([])
+
 // 日期列
 const managerDateColumns = ref<string[]>([])
 
@@ -497,27 +503,6 @@ const managerTotalPages = computed(() => Math.max(1, Math.ceil(managerTableRows.
 const managerPaginatedRows = computed(() => {
   const start = (managerCurrentPage.value - 1) * managerPageSize.value
   return managerTableRows.value.slice(start, start + managerPageSize.value)
-})
-
-// 生成带合并的显示行
-const managerDisplayRows = computed(() => {
-  const list = managerPaginatedRows.value
-  return list.map((row, idx) => {
-    const prev = idx > 0 ? list[idx - 1] : null
-    const isFirstInGroup = !prev || prev.regional_manager !== row.regional_manager
-    let rowspan = 1
-    if (isFirstInGroup) {
-      for (let j = idx + 1; j < list.length; j++) {
-        if (list[j].regional_manager === row.regional_manager) rowspan++
-        else break
-      }
-    }
-    return {
-      ...row,
-      showManager: isFirstInGroup,
-      managerRowspan: isFirstInGroup ? rowspan : 0,
-    }
-  })
 })
 
 const isManagerAllSelected = computed(() => {
@@ -762,12 +747,26 @@ const warehouseCurrentPage = ref(1)
 const warehousePageSize = ref(10)
 const warehouseSelectedRows = ref<string[]>([])
 
+const warehouseFilters = ref({ startDate: '', endDate: '' })
+const warehouseSelectedWarehouses = ref<string[]>([])
+const warehouseSelectedManagers = ref<string[]>([])
+const warehouseSelectedSmelters = ref<string[]>([])
+
 // 日期列
 const warehouseDateColumns = ref<string[]>([])
 
 // 表格行数据
 const warehouseTableRows = ref<WarehouseTableRow[]>([])
-/** 分页后的行 + 仓库列合并（与模板 showWarehouse / warehouseRowspan 对应） */
+
+const warehouseTotalPages = computed(() =>
+  Math.max(1, Math.ceil(warehouseTableRows.value.length / warehousePageSize.value))
+)
+const warehousePaginatedRows = computed(() => {
+  const start = (warehouseCurrentPage.value - 1) * warehousePageSize.value
+  return warehouseTableRows.value.slice(start, start + warehousePageSize.value)
+})
+
+/** 分页后的行 + 仓库列合并（与模板 showWarehouse / warehouseRowspan 对应）；仅保留此一处定义 */
 const warehouseDisplayRows = computed(() => {
   const rows = warehousePaginatedRows.value
   const sorted = [...rows].sort((a, b) => {
@@ -788,7 +787,7 @@ const warehouseDisplayRows = computed(() => {
       out.push({
         ...sorted[k],
         showWarehouse: k === i,
-        warehouseRowspan: span
+        warehouseRowspan: span,
       })
     }
     i = j
@@ -835,33 +834,6 @@ const wfManagersTagsRest = computed(() => warehouseSelectedManagers.value.slice(
 const wfSmeltersTagsPreview = computed(() => warehouseSelectedSmelters.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
 const wfSmeltersTagsMore = computed(() => Math.max(0, warehouseSelectedSmelters.value.length - MULTI_PREVIEW_TAG_COUNT))
 const wfSmeltersTagsRest = computed(() => warehouseSelectedSmelters.value.slice(MULTI_PREVIEW_TAG_COUNT))
-
-const warehouseTotalPages = computed(() => Math.max(1, Math.ceil(warehouseTableRows.value.length / warehousePageSize.value)))
-const warehousePaginatedRows = computed(() => {
-  const start = (warehouseCurrentPage.value - 1) * warehousePageSize.value
-  return warehouseTableRows.value.slice(start, start + warehousePageSize.value)
-})
-
-// 生成带合并的显示行（按仓库合并）
-const warehouseDisplayRows = computed(() => {
-  const list = warehousePaginatedRows.value
-  return list.map((row, idx) => {
-    const prev = idx > 0 ? list[idx - 1] : null
-    const isFirstInGroup = !prev || prev.warehouse !== row.warehouse
-    let rowspan = 1
-    if (isFirstInGroup) {
-      for (let j = idx + 1; j < list.length; j++) {
-        if (list[j].warehouse === row.warehouse) rowspan++
-        else break
-      }
-    }
-    return {
-      ...row,
-      showWarehouse: isFirstInGroup,
-      warehouseRowspan: isFirstInGroup ? rowspan : 0,
-    }
-  })
-})
 
 const isWarehouseAllSelected = computed(() => {
   return warehousePaginatedRows.value.length > 0 && warehouseSelectedRows.value.length === warehousePaginatedRows.value.length
