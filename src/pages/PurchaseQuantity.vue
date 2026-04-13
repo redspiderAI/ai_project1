@@ -195,7 +195,7 @@
               <span 
                 class="legend-name"
                 :style="{ textDecoration: totalWeightVisible ? 'none' : 'line-through' }"
-              >📊 总重量</span>
+              >总重量</span>
             </div>
             <div 
               v-for="(series, idx) in chartSeriesList" 
@@ -273,24 +273,24 @@
               <th width="80">查看</th>
             </tr>
           </thead>
-         <tbody>
-  <tr v-for="row in paginatedData" :key="row.id">
-    <td>{{ row.target_date }}</td>
-    <td>{{ row.regional_manager || '-' }}</td>
-    <td>{{ row.warehouse || '-' }}</td>
-    <td>{{ row.smelter || '-' }}</td>
-    <td>{{ row.product_variety || '-' }}</td>
-    <td>{{ parseFloat(row.predicted_weight).toFixed(2) }}</td>
-    <td><button class="btn-view" @click="openDetailModal(row)">查看</button></td>
-  </tr>
-  <tr v-if="paginatedData.length === 0">
-    <td :colspan="7" class="empty-data">暂无数据</td>
-  </tr>
-</tbody>
+          <tbody>
+            <tr v-for="row in paginatedData" :key="row.id">
+              <td>{{ row.target_date }}</td>
+              <td>{{ row.regional_manager || '-' }}</td>
+              <td>{{ row.warehouse || '-' }}</td>
+              <td>{{ row.smelter || '-' }}</td>
+              <td>{{ row.product_variety || '-' }}</td>
+              <td>{{ parseFloat(row.predicted_weight).toFixed(2) }}</td>
+              <td><button class="btn-view" @click="openDetailModal(row)">查看</button></td>
+            </tr>
+            <tr v-if="paginatedData.length === 0">
+              <td :colspan="7" class="empty-data">暂无数据</td>
+              </tr>
+          </tbody>
         </table>
       </div>
 
-      <!-- 分页 --> 
+      <!-- 分页 -->
       <div class="pagination">
         <button @click="prevPage" :disabled="currentPage === 1">上一页</button>
         <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
@@ -303,7 +303,7 @@
       </div>
     </div>
 
-    <!-- 详情弹窗 -->
+    <!-- 详情弹窗 - 显示品种明细 -->
     <div v-if="modalVisible" class="modal" @click.self="closeModal">
       <div class="modal-content">
         <div class="modal-header">
@@ -313,11 +313,36 @@
         <div class="modal-body">
           <div class="modal-info">
             <p><strong>预测日期：</strong>{{ modalData?.target_date }}</p>
-            <p><strong>大区经理：</strong>{{ modalData?.regional_manager }}</p>
             <p><strong>仓库：</strong>{{ modalData?.warehouse }}</p>
-            <p><strong>冶炼厂：</strong>{{ modalData?.smelter || '-' }}</p>
-            <p><strong>品种：</strong>{{ modalData?.product_variety }}</p>
-            <p><strong>预测重量：</strong>{{ parseFloat(modalData?.predicted_weight || '0').toFixed(2) }} 吨</p>
+            <p><strong>冶炼厂：</strong>{{ modalData?.smelter }}</p>
+          </div>
+          <div class="modal-table-header">
+            <span class="modal-result-label">品种明细</span>
+            <button class="btn btn-sm btn-secondary" @click="exportModalExcel">导出Excel</button>
+          </div>
+          <div class="table-wrapper">
+            <table class="data-table modal-table">
+              <thead>
+                <tr>
+                  <th>品种</th>
+                  <th>重量(吨)</th>
+                  <th width="100">筛选状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in modalVarietyData" :key="item.variety" :class="{ 'row-selected': isVarietySelected(item.variety) }">
+                  <td>{{ item.variety }}</td>
+                  <td>{{ item.weight.toFixed(2) }}</td>
+                  <td>
+                    <span v-if="isVarietySelected(item.variety)" class="status-selected">✅ 已选择</span>
+                    <span v-else class="status-none">—</span>
+                  </td>
+                </tr>
+                <tr v-if="modalVarietyData.length === 0">
+                  <td :colspan="3" class="empty-data">暂无数据</td>
+                  </tr>
+              </tbody>
+            </table>
           </div>
         </div>
         <div class="modal-footer">
@@ -355,21 +380,21 @@ import axios from 'axios'
 import { ApiPaths } from '../api/paths'
 
 // ==================== 类型定义 ====================
-interface PredictResult {
-  id?: number
+interface PredictDetail {
   target_date: string
-  regional_manager: string
   warehouse: string
-  smelter?: string
+  smelter: string
   product_variety: string
   predicted_weight: string
 }
 
-interface DetailResponse {
-  total: number
-  page: number
-  page_size: number
-  items: PredictResult[]
+interface SummaryRow {
+  id: string
+  target_date: string
+  warehouse: string
+  smelter: string
+  total_weight: number
+  details: { variety: string; weight: number }[]
 }
 
 /** GET /api/v1/送货量预测/图表 */
@@ -384,8 +409,8 @@ const colors = ['#1F77B4', '#FF7F0E', '#2CA02C', '#D62728', '#9467BD', '#8C564B'
 
 // ==================== 状态 ====================
 const loading = ref(false)
-const detailData = ref<PredictResult[]>([])
-const detailTotal = ref(0)
+const detailData = ref<PredictDetail[]>([])
+const summaryData = ref<SummaryRow[]>([])
 const chartCanvas = ref<HTMLCanvasElement>()
 
 const chartSummaryDates = ref<string[]>([])
@@ -413,14 +438,6 @@ const filters = ref({
   startDate: todayStr,
   endDate: getFutureDate(14)
 })
-
-// 大区经理多选
-const selectedManagers = ref<string[]>([])
-const managerSearchText = ref('')
-const managerDropdownVisible = ref(false)
-const managerInputRef = ref<HTMLInputElement>()
-const allManagerOptions = ref<string[]>([])
-const filteredManagerOptions = ref<string[]>([])
 
 // 仓库多选
 const selectedWarehouses = ref<string[]>([])
@@ -464,13 +481,17 @@ const varietiesTagsRest = computed(() => selectedVarieties.value.slice(MULTI_PRE
 // 分页
 const currentPage = ref(1)
 const pageSize = ref(10)
-const totalPages = computed(() => Math.max(1, Math.ceil(detailTotal.value / pageSize.value)))
-const paginatedData = computed(() => detailData.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(summaryData.value.length / pageSize.value)))
+const paginatedData = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return summaryData.value.slice(start, start + pageSize.value)
+})
 
 // 弹窗
 const modalVisible = ref(false)
-const modalData = ref<PredictResult | null>(null)
+const modalData = ref<SummaryRow | null>(null)
 const modalTitle = ref('')
+const modalVarietyData = ref<{ variety: string; weight: number }[]>([])
 
 // ==================== 错误弹窗 ====================
 const showError = (message: string, details?: string[]) => {
@@ -517,7 +538,6 @@ async function fetchOptions() {
     const data = response.data as { items: any[] }
     const items = data.items || []
     
-    allManagerOptions.value = [...new Set(items.map((item: any) => item.regional_manager))].filter(Boolean)
     allWarehouseOptions.value = [...new Set(items.map((item: any) => item.warehouse))].filter(Boolean)
     allSmelterOptions.value = [...new Set(items.map((item: any) => item.smelter))].filter(Boolean)
     allVarietyOptions.value = [...new Set(items.map((item: any) => item.product_variety))].filter(Boolean)
@@ -527,7 +547,6 @@ async function fetchOptions() {
     filterVarietyOptions()
   } catch (error) {
     console.error('获取选项失败', error)
-    allManagerOptions.value = ['张建国', '李明华', '王德发']
     allWarehouseOptions.value = ['北京仓库', '上海仓库', '广州仓库']
     allSmelterOptions.value = ['金利', '豫光']
     allVarietyOptions.value = ['电解铜', '铝锭', '锌锭']
@@ -590,6 +609,14 @@ const focusManagerInput = () => {
   nextTick(() => managerInputRef.value?.focus())
 }
 
+=======
+    filteredWarehouseOptions.value = [...allWarehouseOptions.value]
+    filteredSmelterOptions.value = [...allSmelterOptions.value]
+    filteredVarietyOptions.value = [...allVarietyOptions.value]
+  }
+}
+
+>>>>>>> b4fabaa5ba2f0f27798866a5a12fb87dee468437
 // ==================== 仓库多选逻辑 ====================
 const filterWarehouseOptions = () => {
   const search = warehouseSearchText.value.toLowerCase()
@@ -904,10 +931,216 @@ async function fetchDetailData() {
       detailData.value = data.items || []
       detailTotal.value = data.total || 0
     }
+=======
+// ==================== 判断品种是否被选中 ====================
+const isVarietySelected = (variety: string): boolean => {
+  if (selectedVarieties.value.length === 0) return false
+  return selectedVarieties.value.includes(variety)
+}
+
+// ==================== 汇总数据（按日期+仓库+冶炼厂分组） ====================
+const aggregateData = (data: PredictDetail[]): SummaryRow[] => {
+  const map = new Map<string, SummaryRow>()
+  
+  data.forEach(item => {
+    const key = `${item.target_date}|${item.warehouse}|${item.smelter}`
+    if (!map.has(key)) {
+      map.set(key, {
+        id: key,
+        target_date: item.target_date,
+        warehouse: item.warehouse,
+        smelter: item.smelter,
+        total_weight: 0,
+        details: []
+      })
+    }
+    const row = map.get(key)!
+    const weight = parseFloat(item.predicted_weight)
+    row.total_weight += weight
+    row.details.push({
+      variety: item.product_variety,
+      weight: weight
+    })
+  })
+  
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.target_date !== b.target_date) return a.target_date.localeCompare(b.target_date)
+    if (a.warehouse !== b.warehouse) return a.warehouse.localeCompare(b.warehouse)
+    return a.smelter.localeCompare(b.smelter)
+  })
+}
+
+// ==================== 获取预测明细数据 ====================
+async function fetchDetailData() {
+  try {
+    const params: Record<string, any> = {
+      page: 1,
+      page_size: 500,
+      date_from: filters.value.startDate,
+      date_to: filters.value.endDate
+    }
+    
+    if (selectedWarehouses.value.length > 0) {
+      params.warehouses = selectedWarehouses.value
+    }
+    if (selectedSmelters.value.length > 0) {
+      params.smelters = selectedSmelters.value
+    }
+    if (selectedVarieties.value.length > 0) {
+      params.product_varieties = selectedVarieties.value
+    }
+    
+    const response = await axios.get(`${API_BASE_URL}/api/v1/送货量预测/明细`, { params })
+    const items = response.data?.items || []
+    
+    detailData.value = items
+    summaryData.value = aggregateData(items)
+    
+>>>>>>> b4fabaa5ba2f0f27798866a5a12fb87dee468437
   } catch (error: any) {
     console.error('获取明细失败', error)
     detailData.value = []
-    detailTotal.value = 0
+    summaryData.value = []
+  }
+}
+
+// ==================== 触发预测 ====================
+async function triggerPredict() {
+  loading.value = true
+  try {
+    const items = []
+    
+    // 获取默认值
+    const defaultWarehouse = allWarehouseOptions.value[0] || '北京仓库'
+    const defaultSmelter = allSmelterOptions.value[0] || '金利'
+    const defaultVariety = allVarietyOptions.value[0] || '电解铜'
+    
+    // 如果有选中的仓库、冶炼厂、品种
+    if (selectedWarehouses.value.length > 0 && selectedSmelters.value.length > 0 && selectedVarieties.value.length > 0) {
+      for (const warehouse of selectedWarehouses.value) {
+        for (const smelter of selectedSmelters.value) {
+          for (const variety of selectedVarieties.value) {
+            items.push({
+              warehouse: warehouse,
+              smelter: smelter,
+              product_variety: variety,  // 注意：使用 product_variety
+              horizon_days: 15,
+              prediction_start_date: filters.value.startDate,
+              use_cache: true
+            })
+          }
+        }
+      }
+    } 
+    // 只有仓库和冶炼厂
+    else if (selectedWarehouses.value.length > 0 && selectedSmelters.value.length > 0) {
+      for (const warehouse of selectedWarehouses.value) {
+        for (const smelter of selectedSmelters.value) {
+          items.push({
+            warehouse: warehouse,
+            smelter: smelter,
+            product_variety: defaultVariety,
+            horizon_days: 15,
+            prediction_start_date: filters.value.startDate,
+            use_cache: true
+          })
+        }
+      }
+    }
+    // 只有仓库和品种
+    else if (selectedWarehouses.value.length > 0 && selectedVarieties.value.length > 0) {
+      for (const warehouse of selectedWarehouses.value) {
+        for (const variety of selectedVarieties.value) {
+          items.push({
+            warehouse: warehouse,
+            smelter: defaultSmelter,
+            product_variety: variety,
+            horizon_days: 15,
+            prediction_start_date: filters.value.startDate,
+            use_cache: true
+          })
+        }
+      }
+    }
+    // 只有冶炼厂和品种
+    else if (selectedSmelters.value.length > 0 && selectedVarieties.value.length > 0) {
+      for (const smelter of selectedSmelters.value) {
+        for (const variety of selectedVarieties.value) {
+          items.push({
+            warehouse: defaultWarehouse,
+            smelter: smelter,
+            product_variety: variety,
+            horizon_days: 15,
+            prediction_start_date: filters.value.startDate,
+            use_cache: true
+          })
+        }
+      }
+    }
+    // 只有仓库
+    else if (selectedWarehouses.value.length > 0) {
+      for (const warehouse of selectedWarehouses.value) {
+        items.push({
+          warehouse: warehouse,
+          smelter: defaultSmelter,
+          product_variety: defaultVariety,
+          horizon_days: 15,
+          prediction_start_date: filters.value.startDate,
+          use_cache: true
+        })
+      }
+    }
+    // 只有冶炼厂
+    else if (selectedSmelters.value.length > 0) {
+      for (const smelter of selectedSmelters.value) {
+        items.push({
+          warehouse: defaultWarehouse,
+          smelter: smelter,
+          product_variety: defaultVariety,
+          horizon_days: 15,
+          prediction_start_date: filters.value.startDate,
+          use_cache: true
+        })
+      }
+    }
+    // 只有品种
+    else if (selectedVarieties.value.length > 0) {
+      for (const variety of selectedVarieties.value) {
+        items.push({
+          warehouse: defaultWarehouse,
+          smelter: defaultSmelter,
+          product_variety: variety,
+          horizon_days: 15,
+          prediction_start_date: filters.value.startDate,
+          use_cache: true
+        })
+      }
+    }
+    // 没有选择，使用默认值
+    else {
+      items.push({
+        warehouse: defaultWarehouse,
+        smelter: defaultSmelter,
+        product_variety: defaultVariety,
+        horizon_days: 15,
+        prediction_start_date: filters.value.startDate,
+        use_cache: true
+      })
+    }
+    
+    console.log('预测请求参数:', JSON.stringify({ items }, null, 2))
+    
+    const response = await axios.post(`${API_BASE_URL}/api/v1/预测`, { items })
+    console.log('预测响应:', response.data)
+    await new Promise(resolve => setTimeout(resolve, 1500))
+    
+  } catch (error: any) {
+    console.error('预测失败', error)
+    const errorMsg = error.response?.data?.message || error.message || '预测失败'
+    const errorDetail = error.response?.data?.detail
+    showError(errorMsg, errorDetail ? [errorDetail] : ['请检查请求参数是否正确'])
+  } finally {
+    loading.value = false
   }
 }
 
@@ -949,11 +1182,9 @@ function handleReset() {
     startDate: todayStr,
     endDate: getFutureDate(14)
   }
-  selectedManagers.value = []
   selectedWarehouses.value = []
   selectedSmelters.value = []
   selectedVarieties.value = []
-  managerSearchText.value = ''
   warehouseSearchText.value = ''
   smelterSearchText.value = ''
   varietySearchText.value = ''
@@ -964,13 +1195,11 @@ function handleReset() {
 function prevPage() { 
   if (currentPage.value > 1) { 
     currentPage.value-- 
-    fetchDetailData()
   } 
 }
 function nextPage() { 
   if (currentPage.value < totalPages.value) { 
     currentPage.value++ 
-    fetchDetailData()
   } 
 }
 
@@ -1183,18 +1412,20 @@ function drawChart() {
 }
 
 // ==================== 查看弹窗 ====================
-function openDetailModal(row: PredictResult) {
+function openDetailModal(row: SummaryRow) {
   modalData.value = row
-  modalTitle.value = `${row.target_date} - ${row.regional_manager} - ${row.warehouse} - ${row.smelter} - ${row.product_variety} 预测明细`
+  modalTitle.value = `${row.target_date} - ${row.warehouse} - ${row.smelter} 品种明细`
+  modalVarietyData.value = [...row.details]
   modalVisible.value = true
 }
 
 function closeModal() {
   modalVisible.value = false
   modalData.value = null
+  modalVarietyData.value = []
 }
 
-// ==================== 导出 ====================
+// ==================== 导出主表格 ====================
 async function exportExcel() {
   try {
     const params: Record<string, any> = {
@@ -1227,14 +1458,36 @@ async function exportExcel() {
     link.download = `送货量预测_${timestamp}.xlsx`
     link.click()
     URL.revokeObjectURL(link.href)
-  } catch (error) {
-    console.error('导出失败', error)
-    showError('导出失败', ['请稍后重试'])
   }
 }
 
+
+// ==================== 导出弹窗明细 ====================
+function exportModalExcel() {
+  if (modalVarietyData.value.length === 0) {
+    showError('没有可导出的数据', [])
+    return
+  }
+  
+  const headers = ['品种', '重量(吨)', '筛选状态']
+  const rowsData = modalVarietyData.value.map(item => [
+    item.variety,
+    item.weight.toFixed(2),
+    isVarietySelected(item.variety) ? '已选择' : '未选择'
+  ])
+  
+  const csvContent = [headers, ...rowsData].map(row => row.join(',')).join('\n')
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  const timestamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)
+  link.href = URL.createObjectURL(blob)
+  link.download = `${modalTitle.value}_${timestamp}.csv`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
 // ==================== 监听 ====================
-watch(() => detailData.value, () => {
+watch(() => summaryData.value, () => {
   setTimeout(drawChart, 100)
 })
 
@@ -1653,7 +1906,7 @@ onUnmounted(() => {
 .modal-content {
   background: white;
   border-radius: 8px;
-  width: 600px;
+  width: 550px;
   max-width: 90%;
   max-height: 80%;
   overflow: auto;
@@ -1717,6 +1970,36 @@ onUnmounted(() => {
 
 .modal-info strong {
   color: #1F2D3D;
+}
+
+.modal-table-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.modal-result-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #2e7d32;
+}
+
+.modal-table {
+  width: 100%;
+}
+
+.row-selected {
+  background-color: #e8f5e9 !important;
+}
+
+.status-selected {
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.status-none {
+  color: #c0c4cc;
 }
 
 .modal-message {

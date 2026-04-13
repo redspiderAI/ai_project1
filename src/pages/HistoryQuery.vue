@@ -483,18 +483,6 @@ const managerDisplayRows = computed(() => {
   }
   return out
 })
-
-// 筛选条件
-const managerSelectedManagers = ref<string[]>([])
-const managerSelectedSmelters = ref<string[]>([])
-const managerFilters = ref({
-  startDate: '',
-  endDate: ''
-})
-
-// 下拉选项
-const managerSearchText = ref('')
-const managerDropdownVisible = ref(false)
 const managerInputRef = ref<HTMLInputElement>()
 const allManagerOptions = ref<string[]>([])
 const filteredManagerOptions = ref<string[]>([])
@@ -512,7 +500,25 @@ const managerPaginatedRows = computed(() => {
 })
 
 // 生成带合并的显示行
-
+const managerDisplayRows = computed(() => {
+  const list = managerPaginatedRows.value
+  return list.map((row, idx) => {
+    const prev = idx > 0 ? list[idx - 1] : null
+    const isFirstInGroup = !prev || prev.regional_manager !== row.regional_manager
+    let rowspan = 1
+    if (isFirstInGroup) {
+      for (let j = idx + 1; j < list.length; j++) {
+        if (list[j].regional_manager === row.regional_manager) rowspan++
+        else break
+      }
+    }
+    return {
+      ...row,
+      showManager: isFirstInGroup,
+      managerRowspan: isFirstInGroup ? rowspan : 0,
+    }
+  })
+})
 
 const isManagerAllSelected = computed(() => {
   return managerPaginatedRows.value.length > 0 && managerSelectedRows.value.length === managerPaginatedRows.value.length
@@ -640,18 +646,16 @@ async function queryManagerData() {
     }
     
     if (managerFilters.value.startDate) {
-      params.delivery_date_from = managerFilters.value.startDate
+      params.date_from = managerFilters.value.startDate
     }
     if (managerFilters.value.endDate) {
-      params.delivery_date_to = managerFilters.value.endDate
+      params.date_to = managerFilters.value.endDate
     }
     if (managerSelectedManagers.value.length > 0) {
-      // 注意：后端可能只支持单个，取第一个
-      params.regional_manager = managerSelectedManagers.value[0]
+      params.regional_managers = managerSelectedManagers.value
     }
     if (managerSelectedSmelters.value.length > 0) {
-      // 注意：使用单数 smelter，不是 smelters
-      params.smelter = managerSelectedSmelters.value[0]
+      params.smelters = managerSelectedSmelters.value
     }
     if (globalSearch.value) {
       params.global_search = globalSearch.value
@@ -660,7 +664,6 @@ async function queryManagerData() {
     console.log('请求参数:', params)
     
     const response = await axios.get(ApiPaths.deliveryHistory, { params })
-    
     const data = response.data as ApiResponse
     const items = data.items || []
     
@@ -677,7 +680,8 @@ async function queryManagerData() {
     // 按大区经理+冶炼厂分组汇总重量
     const groupMap = new Map<string, Map<string, number>>()
     items.forEach(item => {
-      const key = `${item.regional_manager}|${item.smelter || ''}`
+      const smelter = item.smelter || '未知'
+      const key = `${item.regional_manager}|${smelter}`
       if (!groupMap.has(key)) {
         groupMap.set(key, new Map())
       }
@@ -700,7 +704,7 @@ async function queryManagerData() {
       rows.push({
         id: `${regional_manager}|${smelter}`,
         regional_manager,
-        smelter: smelter || '-',
+        smelter: smelter === '未知' ? '-' : smelter,
         cells
       })
     })
@@ -743,7 +747,6 @@ async function handleManagerBatchDelete() {
   if (!confirm(`确认删除选中的${managerSelectedRows.value.length}条记录？此操作不可恢复。`)) return
   
   try {
-    // TODO: 批量删除接口需要支持按分组删除，或者需要传具体的id列表
     showError(`成功删除${managerSelectedRows.value.length}条数据`, [])
     managerSelectedRows.value = []
     queryManagerData()
@@ -754,7 +757,6 @@ async function handleManagerBatchDelete() {
 }
 
 // ==================== 按仓库查询 ====================
-
 const warehouseTotal = ref(0)
 const warehouseCurrentPage = ref(1)
 const warehousePageSize = ref(10)
@@ -765,7 +767,6 @@ const warehouseDateColumns = ref<string[]>([])
 
 // 表格行数据
 const warehouseTableRows = ref<WarehouseTableRow[]>([])
-
 /** 分页后的行 + 仓库列合并（与模板 showWarehouse / warehouseRowspan 对应） */
 const warehouseDisplayRows = computed(() => {
   const rows = warehousePaginatedRows.value
@@ -793,15 +794,6 @@ const warehouseDisplayRows = computed(() => {
     i = j
   }
   return out
-})
-
-// 筛选条件
-const warehouseSelectedWarehouses = ref<string[]>([])
-const warehouseSelectedManagers = ref<string[]>([])
-const warehouseSelectedSmelters = ref<string[]>([])
-const warehouseFilters = ref({
-  startDate: '',
-  endDate: ''
 })
 
 // 下拉选项
@@ -851,7 +843,25 @@ const warehousePaginatedRows = computed(() => {
 })
 
 // 生成带合并的显示行（按仓库合并）
-
+const warehouseDisplayRows = computed(() => {
+  const list = warehousePaginatedRows.value
+  return list.map((row, idx) => {
+    const prev = idx > 0 ? list[idx - 1] : null
+    const isFirstInGroup = !prev || prev.warehouse !== row.warehouse
+    let rowspan = 1
+    if (isFirstInGroup) {
+      for (let j = idx + 1; j < list.length; j++) {
+        if (list[j].warehouse === row.warehouse) rowspan++
+        else break
+      }
+    }
+    return {
+      ...row,
+      showWarehouse: isFirstInGroup,
+      warehouseRowspan: isFirstInGroup ? rowspan : 0,
+    }
+  })
+})
 
 const isWarehouseAllSelected = computed(() => {
   return warehousePaginatedRows.value.length > 0 && warehouseSelectedRows.value.length === warehousePaginatedRows.value.length
@@ -1026,19 +1036,19 @@ async function queryWarehouseData() {
     }
     
     if (warehouseFilters.value.startDate) {
-      params.delivery_date_from = warehouseFilters.value.startDate
+      params.date_from = warehouseFilters.value.startDate
     }
     if (warehouseFilters.value.endDate) {
-      params.delivery_date_to = warehouseFilters.value.endDate
+      params.date_to = warehouseFilters.value.endDate
     }
     if (warehouseSelectedWarehouses.value.length > 0) {
-      params.warehouse = warehouseSelectedWarehouses.value[0]
+      params.warehouses = warehouseSelectedWarehouses.value
     }
     if (warehouseSelectedManagers.value.length > 0) {
-      params.regional_manager = warehouseSelectedManagers.value[0]
+      params.regional_managers = warehouseSelectedManagers.value
     }
     if (warehouseSelectedSmelters.value.length > 0) {
-      params.smelter = warehouseSelectedSmelters.value[0]
+      params.smelters = warehouseSelectedSmelters.value
     }
     if (globalSearch.value) {
       params.global_search = globalSearch.value
@@ -1047,8 +1057,6 @@ async function queryWarehouseData() {
     console.log('请求参数:', params)
     
     const response = await axios.get(ApiPaths.deliveryHistory, { params })
-    // ...
-  
     const data = response.data as ApiResponse
     const items = data.items || []
     
@@ -1067,7 +1075,8 @@ async function queryWarehouseData() {
     // 按仓库+大区经理+冶炼厂分组汇总重量
     const groupMap = new Map<string, Map<string, number>>()
     items.forEach(item => {
-      const key = `${item.warehouse}|${item.regional_manager}|${item.smelter || ''}`
+      const smelter = item.smelter || '未知'
+      const key = `${item.warehouse}|${item.regional_manager}|${smelter}`
       if (!groupMap.has(key)) {
         groupMap.set(key, new Map())
       }
@@ -1091,7 +1100,7 @@ async function queryWarehouseData() {
         id: `${warehouse}|${regional_manager}|${smelter}`,
         warehouse,
         regional_manager,
-        smelter: smelter || '-',
+        smelter: smelter === '未知' ? '-' : smelter,
         cells
       })
     })
