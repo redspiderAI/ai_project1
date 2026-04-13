@@ -1,6 +1,6 @@
 <template>
   <div class="history-query-page">
-    <!-- 内页菜单 + 全局搜索 -->
+    <!-- 内页菜单 -->
     <div class="card">
       <div class="menu-search-bar">
         <div class="inner-menu">
@@ -18,9 +18,6 @@
           >
             按仓库查询
           </div>
-        </div>
-        <div class="global-search">
-          <input v-model="globalSearch" type="text" class="search-input" placeholder="全局搜索" @input="handleGlobalSearch" />
         </div>
       </div>
     </div>
@@ -409,6 +406,7 @@ interface ApiResponse {
 // 表格行数据（按大区经理查询）
 interface ManagerTableRow {
   id: string
+  recordIds: number[]
   regional_manager: string
   smelter: string
   cells: { text: string; isPlaceholder: boolean }[]
@@ -417,6 +415,7 @@ interface ManagerTableRow {
 // 表格行数据（按仓库查询）
 interface WarehouseTableRow {
   id: string
+  recordIds: number[]
   warehouse: string
   regional_manager: string
   smelter: string
@@ -425,7 +424,6 @@ interface WarehouseTableRow {
 
 // ==================== 通用状态 ====================
 const activeTab = ref('manager')
-const globalSearch = ref('')
 const loading = ref(false)
 
 // 错误弹窗
@@ -642,10 +640,6 @@ async function queryManagerData() {
     if (managerSelectedSmelters.value.length > 0) {
       params.smelters = managerSelectedSmelters.value
     }
-    if (globalSearch.value) {
-      params.global_search = globalSearch.value
-    }
-    
     console.log('请求参数:', params)
     
     const response = await axios.get(ApiPaths.deliveryHistory, { params })
@@ -662,25 +656,26 @@ async function queryManagerData() {
     const dates = [...new Set(items.map(item => item.delivery_date))].sort()
     managerDateColumns.value = dates
     
-    // 按大区经理+冶炼厂分组汇总重量
-    const groupMap = new Map<string, Map<string, number>>()
+    // 按大区经理+冶炼厂分组汇总重量，并收集该组下所有原始记录主键 id
+    const groupMap = new Map<string, { dateMap: Map<string, number>; recordIds: number[] }>()
     items.forEach(item => {
       const smelter = item.smelter || '未知'
       const key = `${item.regional_manager}|${smelter}`
       if (!groupMap.has(key)) {
-        groupMap.set(key, new Map())
+        groupMap.set(key, { dateMap: new Map(), recordIds: [] })
       }
-      const dateMap = groupMap.get(key)!
-      const currentWeight = dateMap.get(item.delivery_date) || 0
-      dateMap.set(item.delivery_date, currentWeight + parseFloat(item.weight))
+      const g = groupMap.get(key)!
+      g.recordIds.push(item.id)
+      const currentWeight = g.dateMap.get(item.delivery_date) || 0
+      g.dateMap.set(item.delivery_date, currentWeight + parseFloat(item.weight))
     })
     
     // 生成表格行
     const rows: ManagerTableRow[] = []
-    groupMap.forEach((dateMap, key) => {
+    groupMap.forEach((g, key) => {
       const [regional_manager, smelter] = key.split('|')
       const cells = dates.map(date => {
-        const weight = dateMap.get(date)
+        const weight = g.dateMap.get(date)
         return {
           text: weight !== undefined ? weight.toString() : '—',
           isPlaceholder: weight === undefined
@@ -688,6 +683,7 @@ async function queryManagerData() {
       })
       rows.push({
         id: `${regional_manager}|${smelter}`,
+        recordIds: g.recordIds,
         regional_manager,
         smelter: smelter === '未知' ? '-' : smelter,
         cells
@@ -729,15 +725,34 @@ function toggleManagerSelectAll() {
 
 async function handleManagerBatchDelete() {
   if (managerSelectedRows.value.length === 0) return
-  if (!confirm(`确认删除选中的${managerSelectedRows.value.length}条记录？此操作不可恢复。`)) return
-  
+  if (!confirm(`确认删除选中的${managerSelectedRows.value.length}行？将删除这些行下全部明细记录，此操作不可恢复。`)) return
+
+  const idSet = new Set<number>()
+  for (const rowId of managerSelectedRows.value) {
+    const row = managerTableRows.value.find((r) => r.id === rowId)
+    row?.recordIds.forEach((id) => idSet.add(id))
+  }
+  const ids = [...idSet]
+  if (ids.length === 0) {
+    showError('无法删除', ['未找到对应的主键 id，请重新查询后再试'])
+    return
+  }
+
   try {
-    showError(`成功删除${managerSelectedRows.value.length}条数据`, [])
+    await axios.delete(ApiPaths.deliveryHistoryBatchDelete, { data: { ids } })
+    window.alert(`已成功删除 ${ids.length} 条送货历史记录`)
     managerSelectedRows.value = []
     queryManagerData()
   } catch (error: any) {
     console.error('删除失败', error)
-    showError('删除失败', [error.response?.data?.message || '请稍后重试'])
+    const detail = error.response?.data?.detail
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('；') || '请稍后重试'
+          : error.response?.data?.message || '请稍后重试'
+    showError('删除失败', [msg])
   }
 }
 
@@ -1022,10 +1037,6 @@ async function queryWarehouseData() {
     if (warehouseSelectedSmelters.value.length > 0) {
       params.smelters = warehouseSelectedSmelters.value
     }
-    if (globalSearch.value) {
-      params.global_search = globalSearch.value
-    }
-    
     console.log('请求参数:', params)
     
     const response = await axios.get(ApiPaths.deliveryHistory, { params })
@@ -1044,25 +1055,26 @@ async function queryWarehouseData() {
     const dates = [...new Set(items.map(item => item.delivery_date))].sort()
     warehouseDateColumns.value = dates
     
-    // 按仓库+大区经理+冶炼厂分组汇总重量
-    const groupMap = new Map<string, Map<string, number>>()
+    // 按仓库+大区经理+冶炼厂分组汇总重量，并收集该组下所有原始记录主键 id
+    const groupMap = new Map<string, { dateMap: Map<string, number>; recordIds: number[] }>()
     items.forEach(item => {
       const smelter = item.smelter || '未知'
       const key = `${item.warehouse}|${item.regional_manager}|${smelter}`
       if (!groupMap.has(key)) {
-        groupMap.set(key, new Map())
+        groupMap.set(key, { dateMap: new Map(), recordIds: [] })
       }
-      const dateMap = groupMap.get(key)!
-      const currentWeight = dateMap.get(item.delivery_date) || 0
-      dateMap.set(item.delivery_date, currentWeight + parseFloat(item.weight))
+      const g = groupMap.get(key)!
+      g.recordIds.push(item.id)
+      const currentWeight = g.dateMap.get(item.delivery_date) || 0
+      g.dateMap.set(item.delivery_date, currentWeight + parseFloat(item.weight))
     })
     
     // 生成表格行
     const rows: WarehouseTableRow[] = []
-    groupMap.forEach((dateMap, key) => {
+    groupMap.forEach((g, key) => {
       const [warehouse, regional_manager, smelter] = key.split('|')
       const cells = dates.map(date => {
-        const weight = dateMap.get(date)
+        const weight = g.dateMap.get(date)
         return {
           text: weight !== undefined ? weight.toString() : '—',
           isPlaceholder: weight === undefined
@@ -1070,6 +1082,7 @@ async function queryWarehouseData() {
       })
       rows.push({
         id: `${warehouse}|${regional_manager}|${smelter}`,
+        recordIds: g.recordIds,
         warehouse,
         regional_manager,
         smelter: smelter === '未知' ? '-' : smelter,
@@ -1114,23 +1127,34 @@ function toggleWarehouseSelectAll() {
 
 async function handleWarehouseBatchDelete() {
   if (warehouseSelectedRows.value.length === 0) return
-  if (!confirm(`确认删除选中的${warehouseSelectedRows.value.length}条记录？此操作不可恢复。`)) return
-  
+  if (!confirm(`确认删除选中的${warehouseSelectedRows.value.length}行？将删除这些行下全部明细记录，此操作不可恢复。`)) return
+
+  const idSet = new Set<number>()
+  for (const rowId of warehouseSelectedRows.value) {
+    const row = warehouseTableRows.value.find((r) => r.id === rowId)
+    row?.recordIds.forEach((id) => idSet.add(id))
+  }
+  const ids = [...idSet]
+  if (ids.length === 0) {
+    showError('无法删除', ['未找到对应的主键 id，请重新查询后再试'])
+    return
+  }
+
   try {
-    showError(`成功删除${warehouseSelectedRows.value.length}条数据`, [])
+    await axios.delete(ApiPaths.deliveryHistoryBatchDelete, { data: { ids } })
+    window.alert(`已成功删除 ${ids.length} 条送货历史记录`)
     warehouseSelectedRows.value = []
     queryWarehouseData()
   } catch (error: any) {
     console.error('删除失败', error)
-    showError('删除失败', [error.response?.data?.message || '请稍后重试'])
-  }
-}
-
-function handleGlobalSearch() {
-  if (activeTab.value === 'manager') {
-    queryManagerData()
-  } else {
-    queryWarehouseData()
+    const detail = error.response?.data?.detail
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('；') || '请稍后重试'
+          : error.response?.data?.message || '请稍后重试'
+    showError('删除失败', [msg])
   }
 }
 
@@ -1139,7 +1163,6 @@ const HISTORY_QUERY_STORAGE_KEY = 'historyQuery.filters.v1'
 
 interface HistoryQueryPersisted {
   activeTab: string
-  globalSearch: string
   managerFilters: { startDate: string; endDate: string }
   managerSelectedManagers: string[]
   managerSelectedSmelters: string[]
@@ -1155,7 +1178,6 @@ function loadPersistedHistoryQuery() {
     if (!raw) return
     const s = JSON.parse(raw) as Partial<HistoryQueryPersisted>
     if (s.activeTab === 'warehouse' || s.activeTab === 'manager') activeTab.value = s.activeTab
-    if (typeof s.globalSearch === 'string') globalSearch.value = s.globalSearch
     if (s.managerFilters) {
       managerFilters.value = {
         startDate: typeof s.managerFilters.startDate === 'string' ? s.managerFilters.startDate : '',
@@ -1182,7 +1204,6 @@ function savePersistedHistoryQuery() {
   try {
     const payload: HistoryQueryPersisted = {
       activeTab: activeTab.value,
-      globalSearch: globalSearch.value,
       managerFilters: { ...managerFilters.value },
       managerSelectedManagers: [...managerSelectedManagers.value],
       managerSelectedSmelters: [...managerSelectedSmelters.value],
@@ -1209,7 +1230,6 @@ function schedulePersistHistoryQuery() {
 watch(
   [
     activeTab,
-    globalSearch,
     managerFilters,
     managerSelectedManagers,
     managerSelectedSmelters,
@@ -1240,7 +1260,6 @@ onBeforeUnmount(() => {
 
 .menu-search-bar {
   display: flex;
-  justify-content: space-between;
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
@@ -1271,18 +1290,6 @@ onBeforeUnmount(() => {
 .menu-item.active {
   background-color: #1476db;
   color: white;
-}
-
-.global-search {
-  flex-shrink: 0;
-}
-
-.search-input {
-  padding: 6px 12px;
-  border: 1px solid #E5E9F2;
-  border-radius: 4px;
-  width: 200px;
-  font-size: 14px;
 }
 
 .filter-row {

@@ -6,7 +6,7 @@
  *   「页面 :80、接口 :8001」被浏览器视为跨域而导致 fetch 报 Failed to fetch（需后端 CORS 或同源反代）
  * - 用 `VITE_API_BASE` 覆盖：完整 URL（直连某台 API）或相对路径（如 `/api/v1`）
  */
-export const API_ORIGIN = 'http://111.229.25.160:8001'
+export const API_ORIGIN = 'https://redspiderbc.cn'
 
 export function getApiBase(): string {
   const fromEnv = import.meta.env.VITE_API_BASE?.trim()

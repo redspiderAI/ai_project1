@@ -37,7 +37,7 @@
       <div v-if="previewData.length > 0" class="card preview-card">
         <div class="preview-header">
           <span class="preview-title">预览数据（前10行）</span>
-          <span class="preview-count">共 {{ previewTotalRows }} 行，已选 {{ selectedPreviewRows.length }} 行</span>
+          <span class="preview-count">共 {{ previewTotalRows }} 行（提交时按后端要求上传<strong>整份文件</strong>）；预览仅显示前 10 行</span>
         </div>
         <div class="table-wrapper">
           <table class="data-table preview-table">
@@ -69,8 +69,8 @@
           </table>
         </div>
         <div class="preview-actions">
-          <button class="btn btn-primary" @click="confirmImport" :disabled="importLoading || selectedPreviewRows.length === 0">
-            {{ importLoading ? '导入中...' : `确认导入 (${selectedPreviewRows.length}条)` }}
+          <button class="btn btn-primary" @click="confirmImport" :disabled="importLoading || !pendingImportFile">
+            {{ importLoading ? '导入中...' : `确认导入（${previewTotalRows} 行）` }}
           </button>
           <button class="btn btn-secondary" @click="clearPreview">取消</button>
         </div>
@@ -374,10 +374,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
-
-
-// ==================== 配置 ====================
-const API_BASE_URL = 'http://111.229.25.160:8001'
+import * as XLSX from 'xlsx'
+import { ApiPaths } from '@/api/paths'
 
 // ==================== 类型定义 ====================
 interface HistoryRecord {
@@ -394,6 +392,8 @@ interface HistoryRecord {
 // 汇总行数据（按日期+大区经理+冶炼厂+仓库分组）
 interface SummaryRow {
   id: string
+  /** 该汇总行对应的原始送货历史主键 id（批量删除用） */
+  recordIds: number[]
   delivery_date: string
   regional_manager: string
   smelter: string
@@ -431,10 +431,11 @@ const summaryData = ref<SummaryRow[]>([])
 const total = ref(0)
 const selectedRows = ref<string[]>([])
 
-// 预览数据
+// 预览数据（与 POST /api/v1/送货历史/import 一致：上传整份原文件，字段名 file）
 const previewData = ref<PreviewRow[]>([])
 const selectedPreviewRows = ref<number[]>([])
 const previewTotalRows = ref(0)
+const pendingImportFile = ref<File | null>(null)
 
 
 // 错误弹窗
@@ -690,6 +691,7 @@ const aggregateData = (data: HistoryRecord[]): SummaryRow[] => {
     if (!map.has(key)) {
       map.set(key, {
         id: key,
+        recordIds: [],
         delivery_date: item.delivery_date,
         regional_manager: item.regional_manager,
         smelter: item.smelter || '',
@@ -699,6 +701,7 @@ const aggregateData = (data: HistoryRecord[]): SummaryRow[] => {
       })
     }
     const row = map.get(key)!
+    row.recordIds.push(item.id)
     const weight = parseFloat(item.weight)
     row.total_weight += weight
     row.details.push({
@@ -718,7 +721,7 @@ const aggregateData = (data: HistoryRecord[]): SummaryRow[] => {
 // ==================== 获取下拉选项 ====================
 const fetchOptions = async () => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, {
+    const response = await axios.get(ApiPaths.deliveryHistory, {
       params: { page: 1, page_size: 200 }
     })
     const data = response.data as ApiResponse
@@ -767,7 +770,7 @@ const fetchData = async () => {
       params.product_varieties = selectedVarieties.value
     }
     
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史`, { params })
+    const response = await axios.get(ApiPaths.deliveryHistory, { params })
     const data = response.data as ApiResponse
     
     if (data && data.items) {
@@ -837,18 +840,35 @@ const toggleSelectAll = () => {
 
 const handleBatchDelete = async () => {
   if (selectedRows.value.length === 0) return
-  if (!confirm(`确认删除选中的${selectedRows.value.length}条记录？此操作不可恢复。`)) return
-  
+  if (!confirm(`确认删除选中的${selectedRows.value.length}条汇总行？将删除其下全部明细记录，此操作不可恢复。`)) return
+
+  const idSet = new Set<number>()
+  for (const sid of selectedRows.value) {
+    const row = summaryData.value.find((r) => r.id === sid)
+    row?.recordIds.forEach((id) => idSet.add(id))
+  }
+  const ids = [...idSet]
+  if (ids.length === 0) {
+    showError('无法删除', ['未找到对应的主键 id，请刷新后重试'])
+    return
+  }
+
   try {
-    // 需要根据汇总行的id找到原始记录的id进行删除
-    // 这里简化处理，实际需要后端支持按分组删除
-    showError(`成功删除${selectedRows.value.length}条数据`, [])
+    await axios.delete(ApiPaths.deliveryHistoryBatchDelete, { data: { ids } })
+    window.alert(`已成功删除 ${ids.length} 条送货历史记录`)
     selectedRows.value = []
     fetchData()
     fetchOptions()
   } catch (error: any) {
     console.error('删除失败', error)
-    showError('删除失败', [error.response?.data?.message || '请稍后重试'])
+    const detail = error.response?.data?.detail
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('；') || '请稍后重试'
+          : error.response?.data?.message || '请稍后重试'
+    showError('删除失败', [msg])
   }
 }
 
@@ -925,7 +945,7 @@ const exportModalExcel = () => {
 // ==================== 导入功能 ====================
 const downloadTemplate = async () => {
   try {
-    const response = await axios.get(`${API_BASE_URL}/api/v1/送货历史/模板`, {
+    const response = await axios.get(ApiPaths.deliveryHistoryTemplate, {
       responseType: 'blob'
     })
     const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
@@ -944,25 +964,146 @@ const triggerImport = () => {
   fileInput.value?.click()
 }
 
-// 解析文件并显示预览（省略，与之前相同，因为代码太长，保持原有逻辑）
-const handleFileSelect = async (_event: Event) => {
-  // ... 保持原有代码不变 ...
+function normalizeHeaderKey(h: string): string {
+  return String(h ?? '')
+    .trim()
+    .replace(/\s+/g, '')
+}
+
+function cellToString(v: unknown): string {
+  if (v == null || v === '') return ''
+  return String(v).trim()
+}
+
+function parseSheetRows(file: File, ab: ArrayBuffer): Record<string, unknown>[] {
+  const ext = file.name.split('.').pop()?.toLowerCase() ?? ''
+  const wb =
+    ext === 'csv'
+      ? XLSX.read(new Uint8Array(ab), { type: 'array' })
+      : XLSX.read(ab, { type: 'array' })
+  const sheetName = wb.SheetNames[0]
+  if (!sheetName) return []
+  const ws = wb.Sheets[sheetName]
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: false, defval: '' })
+}
+
+function rowToPreview(row: Record<string, unknown>, index: number): PreviewRow | null {
+  const keys = Object.keys(row)
+  const get = (name: string) => {
+    const target = normalizeHeaderKey(name)
+    const k = keys.find((x) => normalizeHeaderKey(x) === target)
+    return k ? cellToString(row[k]) : ''
+  }
+  const regionalManager = get('大区经理')
+  const smelter = get('冶炼厂')
+  const warehouse = get('仓库')
+  const deliveryDate = get('送货日期')
+  const variety = get('品种')
+  const weight = get('重量')
+  if (!regionalManager && !warehouse && !deliveryDate && !variety && !weight && !smelter) return null
+  return {
+    regionalManager,
+    smelter,
+    warehouse,
+    deliveryDate,
+    variety,
+    weight,
+    originalIndex: index
+  }
+}
+
+const handleFileSelect = async (event: Event) => {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+
+  importLoading.value = true
+  try {
+    const ab = await file.arrayBuffer()
+    const sheetRows = parseSheetRows(file, ab)
+    const parsed: PreviewRow[] = []
+    let i = 0
+    for (const row of sheetRows) {
+      const pr = rowToPreview(row, i)
+      if (pr) {
+        parsed.push(pr)
+        i++
+      }
+    }
+    if (parsed.length === 0) {
+      showError('未解析到数据', ['请确认首行为表头，且包含：大区经理、冶炼厂、仓库、送货日期、品种、重量'])
+      pendingImportFile.value = null
+      previewData.value = []
+      previewTotalRows.value = 0
+      selectedPreviewRows.value = []
+      return
+    }
+    pendingImportFile.value = file
+    previewTotalRows.value = parsed.length
+    previewData.value = parsed.slice(0, 10)
+    selectedPreviewRows.value = previewData.value.map((_, idx) => idx)
+  } catch (e) {
+    console.error('解析文件失败', e)
+    showError('文件解析失败', ['请使用与模板一致的 .xlsx / .xls / .csv'])
+    pendingImportFile.value = null
+    previewData.value = []
+    previewTotalRows.value = 0
+    selectedPreviewRows.value = []
+  } finally {
+    importLoading.value = false
+  }
 }
 
 const toggleSelectAllPreview = () => {
-  // ... 保持原有代码不变 ...
+  if (isAllPreviewSelected.value) {
+    selectedPreviewRows.value = []
+  } else {
+    selectedPreviewRows.value = previewData.value.map((_, idx) => idx)
+  }
 }
 
 const clearPreview = () => {
-  // ... 保持原有代码不变 ...
+  previewData.value = []
+  selectedPreviewRows.value = []
+  previewTotalRows.value = 0
+  pendingImportFile.value = null
 }
 
 const confirmImport = async () => {
-  // ... 保持原有代码不变 ...
-}
+  const file = pendingImportFile.value
+  if (!file) {
+    showError('请先选择文件', [])
+    return
+  }
 
-// 注意：handleFileSelect、toggleSelectAllPreview、clearPreview、confirmImport 函数保持原有代码不变
-// 由于代码太长，这里省略，实际使用时请保留原有实现
+  importLoading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file, file.name)
+    await axios.post(ApiPaths.deliveryHistoryImport, fd, {
+      timeout: 300_000,
+    })
+    window.alert('导入成功')
+    clearPreview()
+    fetchOptions()
+    if (activeTab.value === 'list') {
+      fetchData()
+    }
+  } catch (error: any) {
+    console.error('导入失败', error)
+    const detail = error.response?.data?.detail
+    const msg =
+      typeof detail === 'string'
+        ? detail
+        : Array.isArray(detail)
+          ? detail.map((d: { msg?: string }) => d?.msg).filter(Boolean).join('；') || '请稍后重试'
+          : error.response?.data?.message || error.message || '请稍后重试'
+    showError('导入失败', [msg])
+  } finally {
+    importLoading.value = false
+  }
+}
 
 onMounted(() => {
   fetchData()
