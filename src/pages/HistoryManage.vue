@@ -976,7 +976,7 @@ onMounted(() => {
 .inner-menu { display: flex; gap: 8px; background: #F5F7FA; border-radius: 8px; padding: 4px; }
 .menu-item { padding: 8px 24px; cursor: pointer; font-size: 14px; font-weight: 500; border-radius: 6px; color: #606266; }
 .menu-item:hover { background-color: rgba(74, 122, 156, 0.1); }
-.menu-item.active { background-color: #1677d6; color: white; }
+.menu-item.active { background-color: #1476db; color: white; }
 .filter-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; }
 .filter-item { display: flex; flex-direction: column; gap: 4px; }
 .filter-item label { font-size: 12px; font-weight: 500; color: #606266; white-space: nowrap; }
@@ -994,20 +994,20 @@ onMounted(() => {
 .multi-input::placeholder { color: #c0c4cc; }
 .dropdown-list { position: absolute; top: 100%; left: 0; right: 0; max-height: 200px; overflow-y: auto; background: white; border: 1px solid #E5E9F2; border-radius: 4px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); z-index: 100; margin-top: 2px; }
 .dropdown-item { padding: 8px 12px; cursor: pointer; font-size: 13px; color: #606266; text-align: left; }
-.dropdown-item:hover { background-color: #F5F7FA; color: #1677d6; }
+.dropdown-item:hover { background-color: #F5F7FA; color: #1476db; }
 .batch-card { padding: 12px 20px; }
 .batch-bar { display: flex; justify-content: flex-start; }
 .btn { padding: 6px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 13px; font-weight: 500; transition: all 0.2s; }
-.btn-primary { background-color: #1677d6; color: white; }
-.btn-primary:hover { background-color: #1677dE; }
+.btn-primary { background-color: #1476db; color: white; }
+.btn-primary:hover { background-color: #1476db; }
 .btn-secondary { background-color: #F5F7FA; color: #606266; border: 1px solid #E5E9F2; }
 .btn-secondary:hover { background-color: #E5E9F2; }
 .btn-sm { padding: 4px 12px; font-size: 12px; }
 .btn-danger { background-color: #f56c6c; color: white; }
 .btn-danger:hover:not(:disabled) { background-color: #f78989; }
 .btn-danger:disabled { opacity: 0.5; cursor: not-allowed; }
-.btn-view { background: none; border: 1px solid #1177DD; color: #1177DD; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
-.btn-view:hover { background-color: #1177DD; color: white; }
+.btn-view { background: none; border: 1px solid #1476db; color: #1476db; padding: 4px 10px; border-radius: 4px; cursor: pointer; font-size: 12px; }
+.btn-view:hover { background-color: #1476db; color: white; }
 .table-wrapper { overflow-x: auto; border: 1px solid #E5E9F2; border-radius: 4px; }
 .data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
 .data-table th, .data-table td { padding: 10px 12px; text-align: center; border-bottom: 1px solid #E5E9F2; white-space: nowrap; }

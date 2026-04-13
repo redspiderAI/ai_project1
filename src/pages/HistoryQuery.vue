@@ -1269,7 +1269,7 @@ onBeforeUnmount(() => {
 }
 
 .menu-item.active {
-  background-color: #1677d6;
+  background-color: #1476db;
   color: white;
 }
 
@@ -1437,7 +1437,7 @@ onBeforeUnmount(() => {
 
 .dropdown-item:hover {
   background-color: #F5F7FA;
-  color: #1677d6
+  color: #1476db
 }
 
 .dropdown-item--selected {
@@ -1461,7 +1461,7 @@ onBeforeUnmount(() => {
 }
 
 .btn-primary {
-  background-color: #1677d6;
+  background-color: #1476db;
   color: white;
 }
 .btn-primary:hover { background-color: #1a88f0; }

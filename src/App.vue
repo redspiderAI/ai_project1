@@ -62,7 +62,7 @@ body {
 }
 
 .nav-bar {
-  background-color: #1677d8;  /* 改为 hsl(200, 89%, 84%) */
+  background-color:#196cc0;
   position: sticky;
   top: 0;
   z-index: 1000;
@@ -89,7 +89,7 @@ body {
   display: flex;
   gap: 8px;
   height: 100%;
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 4px;
 }
@@ -113,7 +113,7 @@ body {
 }
 
 .nav-item.active {
-  color: #1677d8;  /* 改为相同的蓝色 */
+  color: #196cc0;
   background-color: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
