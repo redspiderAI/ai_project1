@@ -2,7 +2,7 @@
   <div id="app">
     <div class="nav-bar">
       <div class="nav-container">
-        <div class="nav-logo">送货量预测模块</div>
+        <div class="nav-logo">生产计划辅助决策系统</div>
         <div class="nav-menu">
           <div 
             class="nav-item"
@@ -62,7 +62,7 @@ body {
 }
 
 .nav-bar {
-  background-color: #4A7A9C;
+  background-color: #1677d8;  /* 改为 hsl(200, 89%, 84%) */
   position: sticky;
   top: 0;
   z-index: 1000;
@@ -113,7 +113,7 @@ body {
 }
 
 .nav-item.active {
-  color: #4A7A9C;
+  color: #1677d8;  /* 改为相同的蓝色 */
   background-color: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }

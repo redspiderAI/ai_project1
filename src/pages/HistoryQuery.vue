@@ -1055,7 +1055,7 @@ onMounted(() => {
 }
 
 .menu-item.active {
-  background-color: #4A7A9C;
+  background-color: #1677d6;
   color: white;
 }
 
@@ -1197,7 +1197,7 @@ onMounted(() => {
 
 .dropdown-item:hover {
   background-color: #F5F7FA;
-  color: #4A7A9C;
+  color: #1677d6
 }
 
 .btn {
@@ -1211,10 +1211,10 @@ onMounted(() => {
 }
 
 .btn-primary {
-  background-color: #4A7A9C;
+  background-color: #1677d6;
   color: white;
 }
-.btn-primary:hover { background-color: #5a8aac; }
+.btn-primary:hover { background-color: #1a88f0; }
 
 .btn-secondary {
   background-color: #F5F7FA;

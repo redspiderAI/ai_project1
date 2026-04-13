@@ -1250,7 +1250,7 @@ onUnmounted(() => {
 }
 
 .btn-primary {
-  background-color: #4A7A9C;
+  background-color: #1677d6;
   color: white;
 }
 .btn-primary:hover { background-color: #5a8aac; }
@@ -1264,15 +1264,15 @@ onUnmounted(() => {
 
 .btn-view {
   background: none;
-  border: 1px solid #4A7A9C;
-  color: #4A7A9C;
+  border: 1px solid #1677d6;
+  color: #1677d6;
   padding: 4px 12px;
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
 }
 .btn-view:hover {
-  background-color: #4A7A9C;
+  background-color: #1677d6;
   color: white;
 }
 
