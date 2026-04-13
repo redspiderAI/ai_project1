@@ -3,46 +3,6 @@
     <!-- 筛选区 -->
     <div class="card">
       <div class="filter-row">
-        <!-- 大区经理多选 -->
-        <div class="filter-item multi-select-item">
-          <label>大区经理</label>
-          <div class="multi-select-container">
-            <div class="selected-tags" @click="focusManagerInput">
-              <span v-for="item in managersTagsPreview" :key="item" class="tag tag-shrink">
-                {{ item }}
-                <button type="button" class="tag-remove" @click.stop="removeManager(item)">×</button>
-              </span>
-              <span
-                v-if="managersTagsMore > 0"
-                class="tag tag-more tag-shrink"
-                :title="'还有：' + managersTagsRest.join('、')"
-              >+{{ managersTagsMore }}</span>
-              <input 
-                ref="managerInputRef"
-                v-model="managerSearchText"
-                type="text"
-                class="multi-input"
-                placeholder="搜索并选择"
-                @input="onManagerSearchInput"
-                @focus="onManagerFocus"
-                @blur="closeManagerDropdown"
-                @keydown.enter="handleManagerKeydown"
-              />
-            </div>
-            <div v-show="managerDropdownVisible && filteredManagerOptions.length > 0" class="dropdown-list">
-              <div 
-                v-for="item in filteredManagerOptions" 
-                :key="item"
-                class="dropdown-item"
-                :class="{ 'dropdown-item--selected': selectedManagers.includes(item) }"
-                @click="onManagerDropdownPick(item)"
-              >
-                {{ item }}
-              </div>
-            </div>
-          </div>
-        </div>
-
         <!-- 仓库多选 -->
         <div class="filter-item multi-select-item">
           <label>仓库</label>
@@ -223,10 +183,10 @@
       <div v-else class="loading-placeholder">暂无数据，请点击查询</div>
     </div>
 
-    <!-- 图表接口：按日汇总表（合计 + 各大区经理） -->
+    <!-- 图表接口：按日汇总表 -->
     <div class="card" v-if="chartSummaryDates.length > 0">
       <div class="section-title">预测按日汇总（吨）</div>
-      <p class="chart-summary-hint">数据来自接口「送货量预测/图表」，与当前筛选日期范围、大区经理、仓库一致。</p>
+      <p class="chart-summary-hint">数据来自接口「送货量预测/图表」，与当前筛选日期范围、仓库一致。</p>
       <div class="table-wrapper chart-summary-table-wrap">
         <table class="data-table chart-summary-table">
           <thead>
@@ -253,7 +213,7 @@
       </div>
     </div>
 
-    <!-- 明细数据区 -->
+    <!-- 明细数据区 - 主表格（不显示品种，显示汇总重量） -->
     <div class="card">
       <div class="table-header">
         <div class="section-title">预测明细数据</div>
@@ -265,10 +225,8 @@
           <thead>
             <tr>
               <th>预测日期</th>
-              <th>大区经理</th>
               <th>仓库</th>
               <th>冶炼厂</th>
-              <th>品种</th>
               <th>预测重量(吨)</th>
               <th width="80">查看</th>
             </tr>
@@ -276,16 +234,14 @@
           <tbody>
             <tr v-for="row in paginatedData" :key="row.id">
               <td>{{ row.target_date }}</td>
-              <td>{{ row.regional_manager || '-' }}</td>
               <td>{{ row.warehouse || '-' }}</td>
               <td>{{ row.smelter || '-' }}</td>
-              <td>{{ row.details.map((d) => d.variety).join('、') || '-' }}</td>
               <td>{{ row.total_weight.toFixed(2) }}</td>
               <td><button class="btn-view" @click="openDetailModal(row)">查看</button></td>
             </tr>
             <tr v-if="paginatedData.length === 0">
-              <td :colspan="7" class="empty-data">暂无数据</td>
-              </tr>
+              <td :colspan="5" class="empty-data">暂无数据</td>
+            </tr>
           </tbody>
         </table>
       </div>
@@ -303,7 +259,7 @@
       </div>
     </div>
 
-    <!-- 详情弹窗 - 显示品种明细 -->
+    <!-- 详情弹窗 - 显示品种明细，带筛选状态 -->
     <div v-if="modalVisible" class="modal" @click.self="closeModal">
       <div class="modal-content">
         <div class="modal-header">
@@ -340,7 +296,7 @@
                 </tr>
                 <tr v-if="modalVarietyData.length === 0">
                   <td :colspan="3" class="empty-data">暂无数据</td>
-                  </tr>
+                </tr>
               </tbody>
             </table>
           </div>
@@ -394,12 +350,10 @@ interface SummaryRow {
   target_date: string
   warehouse: string
   smelter: string
-  regional_manager?: string
   total_weight: number
   details: { variety: string; weight: number }[]
 }
 
-/** GET /api/v1/送货量预测/图表 */
 interface ChartSummaryResponse {
   dates: string[]
   total_by_date: string[]
@@ -441,14 +395,6 @@ const filters = ref({
   endDate: getFutureDate(14)
 })
 
-// 大区经理多选
-const selectedManagers = ref<string[]>([])
-const managerSearchText = ref('')
-const managerDropdownVisible = ref(false)
-const managerInputRef = ref<HTMLInputElement>()
-const allManagerOptions = ref<string[]>([])
-const filteredManagerOptions = ref<string[]>([])
-
 // 仓库多选
 const selectedWarehouses = ref<string[]>([])
 const warehouseSearchText = ref('')
@@ -473,12 +419,8 @@ const varietyInputRef = ref<HTMLInputElement>()
 const allVarietyOptions = ref<string[]>([])
 const filteredVarietyOptions = ref<string[]>([])
 
-/** 多选框内单行展示：只显示前 N 个标签，其余用 +M（悬停可看全部名称） */
+// 多选预览标签
 const MULTI_PREVIEW_TAG_COUNT = 1
-
-const managersTagsPreview = computed(() => selectedManagers.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
-const managersTagsMore = computed(() => Math.max(0, selectedManagers.value.length - MULTI_PREVIEW_TAG_COUNT))
-const managersTagsRest = computed(() => selectedManagers.value.slice(MULTI_PREVIEW_TAG_COUNT))
 
 const warehousesTagsPreview = computed(() => selectedWarehouses.value.slice(0, MULTI_PREVIEW_TAG_COUNT))
 const warehousesTagsMore = computed(() => Math.max(0, selectedWarehouses.value.length - MULTI_PREVIEW_TAG_COUNT))
@@ -533,7 +475,7 @@ function validateDateRange() {
   }
 }
 
-/** 下拉按搜索关键字过滤；已选项仍保留在列表中，用样式标灰 */
+// ==================== 过滤选项 ====================
 function filterOptionsBySearch(options: string[], searchLower: string) {
   if (!searchLower) return [...options]
   return options.filter((opt) => opt.toLowerCase().includes(searchLower))
@@ -548,77 +490,20 @@ async function fetchOptions() {
     const data = response.data as { items: any[] }
     const items = data.items || []
     
-    allManagerOptions.value = [...new Set(items.map((item: any) => item.regional_manager))].filter(Boolean)
     allWarehouseOptions.value = [...new Set(items.map((item: any) => item.warehouse))].filter(Boolean)
     allSmelterOptions.value = [...new Set(items.map((item: any) => item.smelter))].filter(Boolean)
     allVarietyOptions.value = [...new Set(items.map((item: any) => item.product_variety))].filter(Boolean)
     
-    filterManagerOptions()
     filterWarehouseOptions()
     filterVarietyOptions()
   } catch (error) {
     console.error('获取选项失败', error)
-    allManagerOptions.value = ['华东经理', '华北经理']
     allWarehouseOptions.value = ['北京仓库', '上海仓库', '广州仓库']
     allSmelterOptions.value = ['金利', '豫光']
     allVarietyOptions.value = ['电解铜', '铝锭', '锌锭']
-    filterManagerOptions()
     filterWarehouseOptions()
     filterVarietyOptions()
   }
-}
-
-// ==================== 大区经理多选逻辑 ====================
-const filterManagerOptions = () => {
-  const search = managerSearchText.value.toLowerCase()
-  filteredManagerOptions.value = filterOptionsBySearch(allManagerOptions.value, search)
-}
-
-function onManagerFocus() {
-  managerDropdownVisible.value = true
-  filterManagerOptions()
-}
-
-function onManagerSearchInput() {
-  managerDropdownVisible.value = true
-  filterManagerOptions()
-}
-
-const addManager = (item: string) => {
-  if (!selectedManagers.value.includes(item)) {
-    selectedManagers.value.push(item)
-  }
-  managerSearchText.value = ''
-  filterManagerOptions()
-}
-
-const removeManager = (item: string) => {
-  selectedManagers.value = selectedManagers.value.filter(i => i !== item)
-  filterManagerOptions()
-}
-
-function onManagerDropdownPick(item: string) {
-  if (selectedManagers.value.includes(item)) removeManager(item)
-  else addManager(item)
-}
-
-const handleManagerKeydown = (e: KeyboardEvent) => {
-  if (e.key === 'Enter' && managerSearchText.value.trim()) {
-    addManager(managerSearchText.value.trim())
-    e.preventDefault()
-  }
-}
-
-const closeManagerDropdown = () => {
-  setTimeout(() => {
-    managerDropdownVisible.value = false
-  }, 200)
-}
-
-const focusManagerInput = () => {
-  managerDropdownVisible.value = true
-  filterManagerOptions()
-  nextTick(() => managerInputRef.value?.focus())
 }
 
 // ==================== 仓库多选逻辑 ====================
@@ -767,6 +652,12 @@ const focusVarietyInput = () => {
   nextTick(() => varietyInputRef.value?.focus())
 }
 
+// ==================== 判断品种是否被选中 ====================
+const isVarietySelected = (variety: string): boolean => {
+  if (selectedVarieties.value.length === 0) return false
+  return selectedVarieties.value.includes(variety)
+}
+
 // ==================== 触发预测 ====================
 async function triggerPredict() {
   loading.value = true
@@ -834,17 +725,12 @@ async function triggerPredict() {
           use_cache: true
         })
       }
-    }
-    // 只有品种：接口要求每项必须有 warehouse，按「全部可选仓库 × 品种」展开
-    else if (selectedVarieties.value.length > 0) {
-      const warehouses =
-        allWarehouseOptions.value.length > 0
-          ? allWarehouseOptions.value
-          : ['北京仓库', '上海仓库', '广州仓库']
+    } else if (selectedVarieties.value.length > 0) {
+      const warehouses = allWarehouseOptions.value.length > 0 ? allWarehouseOptions.value : ['北京仓库', '上海仓库', '广州仓库']
       for (const warehouse of warehouses) {
         for (const variety of selectedVarieties.value) {
           items.push({
-            warehouse,
+            warehouse: warehouse,
             productVariety: variety,
             horizon_days: 15,
             prediction_start_date: filters.value.startDate,
@@ -884,31 +770,18 @@ async function triggerPredict() {
     } else if (typeof detail === 'string') {
       detailLines = [detail]
     }
-    const errorMsg =
-      data?.message || (detailLines.length > 0 ? '请求参数未通过校验' : '') || error.message || '预测失败'
+    const errorMsg = data?.message || (detailLines.length > 0 ? '请求参数未通过校验' : '') || error.message || '预测失败'
     showError(errorMsg, detailLines.length > 0 ? detailLines : ['请检查请求参数是否正确'])
   } finally {
     loading.value = false
   }
 }
 
-function chartSummaryDateLabel(ymd: string) {
-  return ymd.length >= 10 ? ymd.slice(5) : ymd
-}
-
-function formatChartWeight(v: string | undefined) {
-  if (v == null || v === '') return '—'
-  const n = parseFloat(v)
-  return Number.isNaN(n) ? String(v) : n.toFixed(2)
-}
-
+// ==================== 构建筛选参数 ====================
 function buildForecastFilterParams(): Record<string, any> {
   const params: Record<string, any> = {
     date_from: filters.value.startDate,
     date_to: filters.value.endDate
-  }
-  if (selectedManagers.value.length > 0) {
-    params.regional_managers = selectedManagers.value
   }
   if (selectedWarehouses.value.length > 0) {
     params.warehouses = selectedWarehouses.value
@@ -920,12 +793,6 @@ function buildForecastFilterParams(): Record<string, any> {
     params.smelters = selectedSmelters.value
   }
   return params
-}
-
-// ==================== 判断品种是否被选中 ====================
-const isVarietySelected = (variety: string): boolean => {
-  if (selectedVarieties.value.length === 0) return false
-  return selectedVarieties.value.includes(variety)
 }
 
 // ==================== 汇总数据（按日期+仓库+冶炼厂分组） ====================
@@ -940,7 +807,6 @@ const aggregateData = (data: PredictDetail[]): SummaryRow[] => {
         target_date: item.target_date,
         warehouse: item.warehouse,
         smelter: item.smelter,
-        regional_manager: item.regional_manager,
         total_weight: 0,
         details: [],
       })
@@ -983,7 +849,7 @@ async function fetchDetailData() {
   }
 }
 
-/** 与 Swagger「送货量预测/图表」一致：按日合计 + 分大区经理曲线数据 */
+// ==================== 获取图表汇总数据 ====================
 async function fetchChartSummary() {
   try {
     const params = buildForecastFilterParams()
@@ -1021,11 +887,9 @@ function handleReset() {
     startDate: todayStr,
     endDate: getFutureDate(14)
   }
-  selectedManagers.value = []
   selectedWarehouses.value = []
   selectedSmelters.value = []
   selectedVarieties.value = []
-  managerSearchText.value = ''
   warehouseSearchText.value = ''
   smelterSearchText.value = ''
   varietySearchText.value = ''
@@ -1252,6 +1116,16 @@ function drawChart() {
   ctx.restore()
 }
 
+function chartSummaryDateLabel(ymd: string) {
+  return ymd.length >= 10 ? ymd.slice(5) : ymd
+}
+
+function formatChartWeight(v: string | undefined) {
+  if (v == null || v === '') return '—'
+  const n = parseFloat(v)
+  return Number.isNaN(n) ? String(v) : n.toFixed(2)
+}
+
 // ==================== 查看弹窗 ====================
 function openDetailModal(row: SummaryRow) {
   modalData.value = row
@@ -1273,9 +1147,6 @@ async function exportExcel() {
     date_to: filters.value.endDate,
   }
 
-  if (selectedManagers.value.length > 0) {
-    params.regional_managers = selectedManagers.value
-  }
   if (selectedWarehouses.value.length > 0) {
     params.warehouses = selectedWarehouses.value
   }
@@ -1307,7 +1178,6 @@ async function exportExcel() {
   link.click()
   URL.revokeObjectURL(link.href)
 }
-
 
 // ==================== 导出弹窗明细 ====================
 function exportModalExcel() {
@@ -1545,7 +1415,7 @@ onUnmounted(() => {
   background-color: #1476db;
   color: white;
 }
-.btn-primary:hover { background-color: #5a8aac; }
+.btn-primary:hover { background-color: #0e65c4; }
 
 .btn-secondary {
   background-color: #F5F7FA;
@@ -1698,10 +1568,6 @@ onUnmounted(() => {
 
 .chart-summary-table tbody tr:hover .sticky-col {
   background: #F5F7FA;
-}
-
-.chart-summary-table tbody tr.row-total:hover .sticky-col {
-  background: #e8f2fc;
 }
 
 .empty-data {
