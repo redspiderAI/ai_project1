@@ -1,8 +1,4 @@
-我来修复这些错误。主要问题是模板标签闭合和类型问题。
 
-## 修复后的完整 `HistoryManage.vue`
-
-```vue
 <template>
   <div class="history-manage-page">
     <!-- 内页菜单 -->
@@ -83,7 +79,7 @@
 
       <div v-else class="card placeholder">
         <div class="placeholder-content">
-          <p>📥 请点击"导入数据"按钮，选择符合模板的Excel文件</p>
+          <p>✨请点击"导入数据"按钮，选择符合模板的Excel文件</p>
           <p class="placeholder-tip">模板表头：大区经理、冶炼厂、仓库、送货日期、品种、重量</p>
         </div>
       </div>
