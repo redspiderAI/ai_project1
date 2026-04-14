@@ -155,6 +155,7 @@
             </tbody>
           </table>
         </div>
+        <p class="table-date-unit-note">说明：单元格内数字单位为吨。</p>
 
         <div class="pagination">
           <button @click="managerCurrentPage--" :disabled="managerCurrentPage === 1">上一页</button>
@@ -344,6 +345,7 @@
             </tbody>
           </table>
         </div>
+        <p class="table-date-unit-note">说明：单元格内数字单位为吨。</p>
 
         <div class="pagination">
           <button @click="warehouseCurrentPage--" :disabled="warehouseCurrentPage === 1">上一页</button>
@@ -1502,6 +1504,13 @@ onBeforeUnmount(() => {
 .unit-hint {
   font-size: 13px;
   font-weight: 500;
+  color: #64748b;
+}
+
+.table-date-unit-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
   color: #64748b;
 }
 

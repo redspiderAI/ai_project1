@@ -76,11 +76,45 @@
         </div>
       </div>
 
-      <div v-else class="card placeholder">
-        <div class="placeholder-content">
-          <p>✨请点击"导入数据"按钮，选择符合模板的Excel文件</p>
-          <p class="placeholder-tip">模板表头：大区经理、冶炼厂、仓库、送货日期、品种、重量</p>
+      <div v-else class="card sample-card">
+        <div class="sample-header">
+          <span class="sample-title">模板示例数据</span>
+          <span class="sample-hint">与「下载模板」同一接口返回的文件解析所得，供对照表头与填写格式；导入请仍点击「导入数据」</span>
         </div>
+        <div v-if="templateSampleLoading" class="sample-loading">正在加载模板示例…</div>
+        <template v-else>
+          <div class="table-wrapper">
+            <table class="data-table sample-table">
+              <thead>
+                <tr>
+                  <th>大区经理</th>
+                  <th>冶炼厂</th>
+                  <th>仓库</th>
+                  <th>送货日期</th>
+                  <th>品种</th>
+                  <th>重量</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(row, idx) in templateSampleRows" :key="idx">
+                  <td>{{ row.regionalManager || '-' }}</td>
+                  <td>{{ row.smelter || '-' }}</td>
+                  <td>{{ row.warehouse || '-' }}</td>
+                  <td>{{ row.deliveryDate || '-' }}</td>
+                  <td>{{ row.variety || '-' }}</td>
+                  <td>{{ row.weight || '-' }}</td>
+                </tr>
+                <tr v-if="templateSampleRows.length === 0">
+                  <td colspan="6" class="empty-data">未从模板中解析到示例行，请检查网络后刷新页面，或使用「下载模板」查看完整文件</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="sample-format-note">
+            注意：填写须与模板表头一致，勿改列名或顺序；各列勿留空。
+            <strong>送货日期</strong>须为可被识别的日期（建议使用 Excel 日期单元格，或 <code>YYYY-MM-DD</code>、<code>YYYY/MM/DD</code> 等形式），勿填纯文字或非法格式；<strong>重量</strong>须为数字，。
+          </p>
+        </template>
       </div>
     </div>
 
@@ -436,6 +470,10 @@ const previewData = ref<PreviewRow[]>([])
 const selectedPreviewRows = ref<number[]>([])
 const previewTotalRows = ref(0)
 const pendingImportFile = ref<File | null>(null)
+
+/** 与下载模板同一接口拉取并解析，用于数据导入页中部展示示例行 */
+const templateSampleRows = ref<PreviewRow[]>([])
+const templateSampleLoading = ref(false)
 
 
 // 错误弹窗
@@ -943,12 +981,49 @@ const exportModalExcel = () => {
 }
 
 // ==================== 导入功能 ====================
+/** 与「下载模板」共用同一请求，保证页面示例与下载文件一致 */
+async function fetchDeliveryHistoryTemplateBuffer(): Promise<ArrayBuffer> {
+  const { data } = await axios.get<ArrayBuffer>(ApiPaths.deliveryHistoryTemplate, {
+    responseType: 'arraybuffer',
+  })
+  return data
+}
+
+function parseWorkbookRowsFromArrayBuffer(ab: ArrayBuffer): Record<string, unknown>[] {
+  const wb = XLSX.read(ab, { type: 'array' })
+  const sheetName = wb.SheetNames[0]
+  if (!sheetName) return []
+  const ws = wb.Sheets[sheetName]
+  return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: false, defval: '' })
+}
+
+const loadTemplateSampleRows = async () => {
+  templateSampleLoading.value = true
+  try {
+    const ab = await fetchDeliveryHistoryTemplateBuffer()
+    const sheetRows = parseWorkbookRowsFromArrayBuffer(ab)
+    const parsed: PreviewRow[] = []
+    let i = 0
+    for (const row of sheetRows) {
+      const pr = rowToPreview(row, i)
+      if (pr) {
+        parsed.push(pr)
+        i++
+      }
+    }
+    templateSampleRows.value = parsed.slice(0, 10)
+  } catch (e) {
+    console.error('加载模板示例失败', e)
+    templateSampleRows.value = []
+  } finally {
+    templateSampleLoading.value = false
+  }
+}
+
 const downloadTemplate = async () => {
   try {
-    const response = await axios.get(ApiPaths.deliveryHistoryTemplate, {
-      responseType: 'blob'
-    })
-    const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+    const ab = await fetchDeliveryHistoryTemplateBuffer()
+    const blob = new Blob([ab], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
     const link = document.createElement('a')
     link.href = URL.createObjectURL(blob)
     link.download = '送货数据导入模板.xlsx'
@@ -1108,6 +1183,7 @@ const confirmImport = async () => {
 onMounted(() => {
   fetchData()
   fetchOptions()
+  loadTemplateSampleRows()
 })
 </script>
 
@@ -1171,9 +1247,28 @@ onMounted(() => {
 .preview-table th, .preview-table td { padding: 6px 10px; }
 .preview-actions { display: flex; justify-content: flex-end; gap: 12px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #E5E9F2; }
 
-.placeholder { min-height: 300px; display: flex; align-items: center; justify-content: center; }
-.placeholder-content { text-align: center; color: #909399; font-size: 14px; }
-.placeholder-tip { font-size: 12px; margin-top: 8px; color: #b0b3b8; }
+.sample-card { min-height: 280px; }
+.sample-header { margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #E5E9F2; display: flex; flex-direction: column; gap: 4px; }
+.sample-title { font-size: 14px; font-weight: 600; color: #2c3e50; }
+.sample-hint { font-size: 12px; color: #909399; line-height: 1.5; }
+.sample-loading { text-align: center; padding: 48px 16px; color: #909399; font-size: 14px; }
+.sample-table { font-size: 13px; }
+.sample-table th, .sample-table td { padding: 8px 12px; }
+.sample-format-note {
+  margin: 12px 0 0;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #e53935;
+}
+.sample-format-note code {
+  font-size: 11px;
+  padding: 0 4px;
+  background: #ffebee;
+  border-radius: 3px;
+  color: #c62828;
+}
+.sample-format-note strong { font-weight: 600; }
 
 /* 弹窗样式 */
 .modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center; z-index: 2000; }

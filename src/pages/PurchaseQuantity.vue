@@ -165,6 +165,7 @@
             </tbody>
           </table>
         </div>
+        <p class="table-date-unit-note">说明：单元格内数字单位为吨。</p>
         <div class="pagination">
           <button @click="forecastManagerCurrentPage--" :disabled="forecastManagerCurrentPage === 1">上一页</button>
           <span>第 {{ forecastManagerCurrentPage }} / {{ forecastManagerTotalPages }} 页</span>
@@ -361,6 +362,7 @@
             </tbody>
           </table>
         </div>
+        <p class="table-date-unit-note">说明：单元格内数字单位为吨。</p>
         <div class="pagination">
           <button @click="forecastWarehouseCurrentPage--" :disabled="forecastWarehouseCurrentPage === 1">上一页</button>
           <span>第 {{ forecastWarehouseCurrentPage }} / {{ forecastWarehouseTotalPages }} 页</span>
@@ -1479,6 +1481,13 @@ onMounted(async () => {
 .unit-hint {
   font-size: 13px;
   font-weight: 500;
+  color: #64748b;
+}
+
+.table-date-unit-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
   color: #64748b;
 }
 
