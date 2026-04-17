@@ -7,6 +7,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+.cursor
+.cursor\skills
+.cursor\skills\pragmatic-coding\examples.md
+
 node_modules
 dist
 dist-ssr
