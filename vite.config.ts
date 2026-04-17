@@ -24,10 +24,11 @@ function buildApiProxy(env: Record<string, string>): Record<string, ProxyOptions
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
   const apiProxy = buildApiProxy(env)
+  const isProd = mode === 'production'
 
   return {
-    // 部署在 http://<host>/project2/ 子路径时需与服务器 location 一致（改部署路径时同步改此处）
-    base: '/project2/',
+    // 开发环境使用根路径，生产部署到 /project2/ 子路径。
+    base: isProd ? '/project2/' : '/',
     plugins: [vue()],
     resolve: {
       alias: {

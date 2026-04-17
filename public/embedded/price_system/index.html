@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI智能比价系统 - 内部版</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <script type="module" crossorigin src="./assets/index-e7CRb-gt.js"></script>
+  <link rel="stylesheet" crossorigin href="./assets/index-FWNO-FnP.css">
+</head>
+<body>
+    <div id="shell"></div>
+    <script>
+      (function () {
+        try {
+          if (new URLSearchParams(location.search).get('embed') !== '1') return
+          document.documentElement.classList.add('portal-embed')
+          function hideNav() {
+            var el = document.querySelector('.top-navbar')
+            if (el) {
+              el.style.setProperty('display', 'none', 'important')
+              return true
+            }
+            return false
+          }
+          function tightenLayout() {
+            var wrap = document.querySelector('.content-wrapper')
+            if (wrap) {
+              wrap.style.setProperty('padding-top', '12px', 'important')
+            }
+          }
+          function run() {
+            if (hideNav()) {
+              tightenLayout()
+              return
+            }
+            var obs = new MutationObserver(function () {
+              if (hideNav()) {
+                tightenLayout()
+                obs.disconnect()
+              }
+            })
+            var root = document.body || document.documentElement
+            obs.observe(root, { childList: true, subtree: true })
+            setTimeout(function () {
+              obs.disconnect()
+            }, 8000)
+          }
+          if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', run)
+          } else {
+            run()
+          }
+        } catch (e) {}
+      })()
+    </script>
+</body>
+</html>

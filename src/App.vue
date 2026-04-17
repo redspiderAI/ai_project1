@@ -1,51 +1,108 @@
 <template>
-  <div id="app">
-    <div class="nav-bar">
-      <div class="nav-container">
-        <div class="nav-logo">生产计划辅助决策系统</div>
-        <div class="nav-menu">
-          <div 
-            class="nav-item"
-            :class="{ active: activeMenu === 'historyManage' }"
-            @click="activeMenu = 'historyManage'"
+  <div class="integration-shell">
+    <header class="top-nav">
+      <div class="top-nav-inner">
+        <div class="title-group">
+          <h1 class="title">AI 综合业务门户</h1>
+          <p class="subtitle">将业务页面统一到同一个网页入口</p>
+        </div>
+        <div class="module-tabs">
+          <button
+            v-for="item in primaryTabs"
+            :key="item.key"
+            class="tab-btn tab-btn-primary"
+            :class="{ active: activeSection === item.key }"
+            type="button"
+            @click="activeSection = item.key"
           >
-            历史数据管理
-          </div>
-          <div 
-            class="nav-item"
-            :class="{ active: activeMenu === 'historyQuery' }"
-            @click="activeMenu = 'historyQuery'"
-          >
-            历史数据查询
-          </div>
-          <div 
-            class="nav-item"
-            :class="{ active: activeMenu === 'forecast' }"
-            @click="activeMenu = 'forecast'"
-          >
-            送货量预测
-          </div>
+            {{ item.label }}
+          </button>
         </div>
       </div>
-    </div>
-    <div class="main-content">
-      <HistoryManage v-if="activeMenu === 'historyManage'" />
-      <HistoryQuery v-else-if="activeMenu === 'historyQuery'" />
-      <PurchaseQuantity v-else />
-    </div>
+    </header>
+
+    <nav v-if="activeSection === 'prediction'" class="sub-nav" aria-label="AI 预测子模块">
+      <div class="sub-nav-inner">
+        <button
+          v-for="item in predictionSubTabs"
+          :key="item.key"
+          class="sub-tab-btn"
+          :class="{ active: predictionSubTab === item.key }"
+          type="button"
+          @click="predictionSubTab = item.key"
+        >
+          {{ item.label }}
+        </button>
+      </div>
+    </nav>
+
+    <main class="page-main" :class="{ 'has-sub-nav': activeSection === 'prediction' }">
+      <section v-if="activeSection === 'prediction' && predictionSubTab === 'historyManage'" class="panel inner-page">
+        <HistoryManage />
+      </section>
+      <section v-else-if="activeSection === 'prediction' && predictionSubTab === 'historyQuery'" class="panel inner-page">
+        <HistoryQuery />
+      </section>
+      <section v-else-if="activeSection === 'prediction' && predictionSubTab === 'forecast'" class="panel inner-page">
+        <PurchaseQuantity />
+      </section>
+      <section v-else class="panel iframe-panel">
+        <iframe
+          class="embedded-frame"
+          :src="embeddedIframeSrc"
+          :title="activeFrameTitle"
+        />
+      </section>
+    </main>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import HistoryManage from './pages/HistoryManage.vue'
 import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
 
-const activeMenu = ref('historyManage')
+type SectionKey = 'prediction' | 'detect' | 'price'
+type PredictionSubKey = 'historyManage' | 'historyQuery' | 'forecast'
+
+const primaryTabs: Array<{ key: SectionKey; label: string }> = [
+  { key: 'prediction', label: 'AI 预测' },
+  { key: 'detect', label: '图片真伪检查' },
+  { key: 'price', label: 'AI 比价系统' },
+]
+
+const predictionSubTabs: Array<{ key: PredictionSubKey; label: string }> = [
+  { key: 'historyManage', label: '历史数据管理' },
+  { key: 'historyQuery', label: '历史数据查询' },
+  { key: 'forecast', label: '送货量预测' },
+]
+
+const activeSection = ref<SectionKey>('prediction')
+const predictionSubTab = ref<PredictionSubKey>('historyManage')
+const baseUrl = import.meta.env.BASE_URL
+
+function embeddedBasePath(section: 'detect' | 'price') {
+  if (section === 'detect') return `${baseUrl}embedded/ai_test/index.html`
+  return `${baseUrl}embedded/price_system/index.html`
+}
+
+/** 嵌入门户：带 embed=1，子页面可隐藏自带顶栏，避免「页中页」 */
+const embeddedIframeSrc = computed(() => {
+  const s = activeSection.value
+  if (s !== 'detect' && s !== 'price') return 'about:blank'
+  const path = embeddedBasePath(s)
+  const sep = path.includes('?') ? '&' : '?'
+  return `${path}${sep}embed=1`
+})
+
+const activeFrameTitle = computed(() => {
+  if (activeSection.value === 'detect') return '图像真伪检测系统'
+  return 'AI 智能比价系统'
+})
 </script>
 
-<style>
+<style scoped>
 * {
   margin: 0;
   padding: 0;
@@ -54,73 +111,177 @@ const activeMenu = ref('historyManage')
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
-  background-color: #F5F7FA;
+  background-color: #f5f7fa;
 }
 
-#app {
+.integration-shell {
   min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: #f5f7fa;
 }
 
-.nav-bar {
-  background-color:#196cc0;
+.top-nav {
+  background-color: #196cc0;
   position: sticky;
   top: 0;
-  z-index: 1000;
+  z-index: 1100;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
 }
 
-.nav-container {
+.top-nav-inner {
   max-width: 100%;
   margin: 0 auto;
   padding: 0 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 60px;
+  gap: 20px;
+  min-height: 72px;
+  flex-wrap: wrap;
 }
 
-.nav-logo {
+.title-group {
+  padding: 10px 0;
+}
+
+.title {
   color: white;
-  font-size: 18px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 700;
 }
 
-.nav-menu {
+.subtitle {
+  margin-top: 4px;
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 13px;
+}
+
+.module-tabs {
   display: flex;
   gap: 8px;
-  height: 100%;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 4px;
+  margin: 10px 0;
 }
 
-.nav-item {
-  padding: 0 24px;
-  height: 44px;
+.tab-btn {
+  border: none;
+  padding: 0 18px;
+  height: 40px;
   display: flex;
   align-items: center;
+  justify-content: center;
   color: rgba(255, 255, 255, 0.85);
   cursor: pointer;
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 500;
   transition: all 0.2s;
   border-radius: 6px;
+  background: transparent;
+  font-family: inherit;
 }
 
-.nav-item:hover {
+.tab-btn-primary {
+  padding: 0 22px;
+  font-weight: 600;
+}
+
+.tab-btn:hover {
   color: white;
   background-color: rgba(255, 255, 255, 0.2);
 }
 
-.nav-item.active {
+.tab-btn.active {
   color: #196cc0;
   background-color: white;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
-.main-content {
-  padding: 20px;
+.sub-nav {
+  position: sticky;
+  top: 72px;
+  z-index: 1050;
+  background: #ffffff;
+  border-bottom: 1px solid #e5e7eb;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.sub-nav-inner {
+  max-width: 1600px;
+  margin: 0 auto;
+  padding: 8px 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.sub-tab-btn {
+  border: 1px solid transparent;
+  padding: 0 16px;
+  height: 34px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  font-family: inherit;
+  color: #4b5563;
+  background: #f3f4f6;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.sub-tab-btn:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
+.sub-tab-btn.active {
+  color: #196cc0;
+  background: rgba(25, 108, 192, 0.1);
+  border-color: rgba(25, 108, 192, 0.35);
+}
+
+.page-main {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.panel {
+  width: 100%;
+}
+
+.inner-page {
   max-width: 1400px;
   margin: 0 auto;
+  padding: 20px;
+}
+
+.iframe-panel {
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 72px);
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+}
+
+.page-main.has-sub-nav .iframe-panel {
+  height: calc(100vh - 72px - 51px);
+}
+
+.embedded-frame {
+  flex: 1;
+  width: 100%;
+  min-height: 0;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  display: block;
+  background: #fff;
 }
 </style>
