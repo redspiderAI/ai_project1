@@ -274,6 +274,7 @@ body {
   height: calc(100vh - 72px - 51px);
 }
 
+
 .embedded-frame {
   flex: 1;
   width: 100%;
