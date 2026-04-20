@@ -46,6 +46,9 @@
       <section v-else-if="activeSection === 'prediction' && predictionSubTab === 'forecast'" class="panel inner-page">
         <PurchaseQuantity />
       </section>
+      <section v-else-if="activeSection === 'map'" class="panel emap-panel">
+        <ElectronicMap />
+      </section>
       <section v-else class="panel iframe-panel">
         <iframe
           class="embedded-frame"
@@ -62,12 +65,14 @@ import { computed, ref } from 'vue'
 import HistoryManage from './pages/HistoryManage.vue'
 import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
+import ElectronicMap from './pages/ElectronicMap.vue'
 
-type SectionKey = 'prediction' | 'detect' | 'price'
+type SectionKey = 'prediction' | 'map' | 'detect' | 'price'
 type PredictionSubKey = 'historyManage' | 'historyQuery' | 'forecast'
 
 const primaryTabs: Array<{ key: SectionKey; label: string }> = [
   { key: 'prediction', label: 'AI 预测' },
+  { key: 'map', label: '电子地图' },
   { key: 'detect', label: '图片真伪检查' },
   { key: 'price', label: 'AI 比价系统' },
 ]
@@ -268,6 +273,16 @@ body {
   display: flex;
   flex-direction: column;
   background: #fff;
+}
+
+.emap-panel {
+  flex: 1;
+  min-height: 0;
+  height: calc(100vh - 72px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #f3f4f6;
 }
 
 .page-main.has-sub-nav .iframe-panel {
