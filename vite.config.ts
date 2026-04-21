@@ -47,10 +47,40 @@ function buildTlAuthProxy(env: Record<string, string>): Record<string, ProxyOpti
   }
 }
 
+/** AI 预测新接口：不再走 /api/v1 前缀 */
+function buildPredictProxy(env: Record<string, string>): Record<string, ProxyOptions> {
+  const raw = (env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
+  const target = raw.replace(/\/+$/, '')
+  const secure = proxySecureFlag(env)
+  const common = { target, changeOrigin: true, secure } satisfies ProxyOptions
+  return {
+    '/delivery-history': common,
+    '/forecast': common,
+    '/predict': common,
+  }
+}
+
+/** AI 鉴伪接口代理 */
+function buildAiDetectionProxy(env: Record<string, string>): Record<string, ProxyOptions> {
+  const raw = (env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
+  const target = raw.replace(/\/+$/, '')
+  const secure = proxySecureFlag(env)
+  const common = { target, changeOrigin: true, secure } satisfies ProxyOptions
+  return {
+    '/ai-detection': common,
+  }
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
-  const apiProxy = { ...buildApiProxy(env), ...buildTlAuthProxy(env), ...buildAmapGeocodeProxy() }
+  const apiProxy = {
+    ...buildApiProxy(env),
+    ...buildTlAuthProxy(env),
+    ...buildPredictProxy(env),
+    ...buildAiDetectionProxy(env),
+    ...buildAmapGeocodeProxy(),
+  }
   const isProd = mode === 'production'
 
   return {

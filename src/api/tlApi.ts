@@ -13,6 +13,13 @@ function unwrapList(data: unknown): Record<string, unknown>[] {
   return []
 }
 
+function unwrapData(data: unknown): unknown {
+  if (data == null || typeof data !== 'object') return data
+  const o = data as Record<string, unknown>
+  if ('data' in o) return o.data
+  return data
+}
+
 function authHeaders(): HeadersInit {
   const token = typeof localStorage !== 'undefined' ? localStorage.getItem('api_token') : null
   if (!token) return {}
@@ -75,4 +82,35 @@ export async function fetchTlWarehouseTypes(includeInactive = false): Promise<Re
   const q = includeInactive ? 'true' : 'false'
   const raw = await tlGetJson(`/tl/get_warehouse_types?include_inactive=${q}`)
   return unwrapList(raw)
+}
+
+export async function fetchTlComparison(
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>[]> {
+  const raw = await tlPostJson('/tl/get_comparison', body)
+  return unwrapList(unwrapData(raw))
+}
+
+export async function fetchForecastDetail(
+  params: Record<string, string | number | Array<string | number>>,
+): Promise<Record<string, unknown>[]> {
+  const search = new URLSearchParams()
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null) continue
+    if (Array.isArray(value)) {
+      for (const item of value) search.append(key, String(item))
+      continue
+    }
+    search.append(key, String(value))
+  }
+  const query = search.toString()
+  const path = `/forecast/明细${query ? `?${query}` : ''}`
+  const raw = await tlGetJson(path)
+  const data = unwrapData(raw)
+  if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {
+    return ((data as { items: unknown[] }).items || []).filter(
+      (x): x is Record<string, unknown> => !!x && typeof x === 'object',
+    )
+  }
+  return unwrapList(data)
 }

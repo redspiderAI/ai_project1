@@ -71,8 +71,8 @@ type SectionKey = 'prediction' | 'map' | 'detect' | 'price'
 type PredictionSubKey = 'historyManage' | 'historyQuery' | 'forecast'
 
 const primaryTabs: Array<{ key: SectionKey; label: string }> = [
-  { key: 'prediction', label: 'AI 预测' },
   { key: 'map', label: '电子地图' },
+  { key: 'prediction', label: 'AI 预测' },
   { key: 'detect', label: '图片真伪检查' },
   { key: 'price', label: 'AI 比价系统' },
 ]
@@ -83,7 +83,7 @@ const predictionSubTabs: Array<{ key: PredictionSubKey; label: string }> = [
   { key: 'forecast', label: '送货量预测' },
 ]
 
-const activeSection = ref<SectionKey>('prediction')
+const activeSection = ref<SectionKey>('map')
 const predictionSubTab = ref<PredictionSubKey>('historyManage')
 const baseUrl = import.meta.env.BASE_URL
 
