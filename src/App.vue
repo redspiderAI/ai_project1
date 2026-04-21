@@ -18,6 +18,22 @@
             {{ item.label }}
           </button>
         </div>
+        <div class="auth-tools">
+          <button v-if="!isLoggedIn" class="auth-btn auth-btn-login" type="button" @click="showLogin = true">
+            <i class="bi bi-box-arrow-in-right"></i>
+            登录
+          </button>
+          <template v-else>
+            <button class="auth-btn auth-btn-user" type="button" @click="openUserManage">
+              <i class="bi bi-people"></i>
+              用户管理
+            </button>
+            <button class="auth-btn auth-btn-logout" type="button" @click="logoutNow">
+              <i class="bi bi-box-arrow-right"></i>
+              退出
+            </button>
+          </template>
+        </div>
       </div>
     </header>
 
@@ -49,6 +65,9 @@
       <section v-else-if="activeSection === 'map'" class="panel emap-panel">
         <ElectronicMap />
       </section>
+      <section v-else-if="activeSection === 'users'" class="panel inner-page">
+        <UserManage />
+      </section>
       <section v-else class="panel iframe-panel">
         <iframe
           class="embedded-frame"
@@ -57,6 +76,29 @@
         />
       </section>
     </main>
+
+    <div v-if="showLogin" class="login-mask">
+      <div class="card login-card">
+        <div class="card-body">
+          <h6 class="mb-3">用户登录</h6>
+          <div class="mb-2">
+            <label class="form-label">用户名</label>
+            <input v-model.trim="loginForm.username" class="form-control form-control-sm" />
+          </div>
+          <div class="mb-2">
+            <label class="form-label">密码</label>
+            <input v-model.trim="loginForm.password" type="password" class="form-control form-control-sm" />
+          </div>
+          <div v-if="loginError" class="alert alert-warning py-2 mb-2">{{ loginError }}</div>
+          <div class="login-actions">
+            <button class="btn btn-sm btn-secondary" type="button" @click="showLogin = false">取消</button>
+            <button class="btn btn-sm btn-primary" type="button" :disabled="loginLoading" @click="submitLogin">
+              {{ loginLoading ? '登录中…' : '登录' }}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -66,8 +108,10 @@ import HistoryManage from './pages/HistoryManage.vue'
 import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
 import ElectronicMap from './pages/ElectronicMap.vue'
+import UserManage from './pages/UserManage.vue'
+import { clearToken, getToken, login } from './api/authApi'
 
-type SectionKey = 'prediction' | 'map' | 'detect' | 'price'
+type SectionKey = 'prediction' | 'map' | 'detect' | 'price' | 'users'
 type PredictionSubKey = 'historyManage' | 'historyQuery' | 'forecast'
 
 const primaryTabs: Array<{ key: SectionKey; label: string }> = [
@@ -86,6 +130,11 @@ const predictionSubTabs: Array<{ key: PredictionSubKey; label: string }> = [
 const activeSection = ref<SectionKey>('map')
 const predictionSubTab = ref<PredictionSubKey>('historyManage')
 const baseUrl = import.meta.env.BASE_URL
+const isLoggedIn = ref(!!getToken())
+const showLogin = ref(false)
+const loginLoading = ref(false)
+const loginError = ref('')
+const loginForm = ref({ username: '', password: '' })
 
 function embeddedBasePath(section: 'detect' | 'price') {
   if (section === 'detect') return `${baseUrl}embedded/ai_test/index.html`
@@ -105,6 +154,35 @@ const activeFrameTitle = computed(() => {
   if (activeSection.value === 'detect') return '图像真伪检测系统'
   return 'AI 智能比价系统'
 })
+
+function openUserManage() {
+  activeSection.value = 'users'
+}
+
+function logoutNow() {
+  clearToken()
+  isLoggedIn.value = false
+  if (activeSection.value === 'users') activeSection.value = 'map'
+}
+
+async function submitLogin() {
+  if (!loginForm.value.username || !loginForm.value.password) {
+    loginError.value = '请输入用户名和密码'
+    return
+  }
+  loginLoading.value = true
+  loginError.value = ''
+  try {
+    await login(loginForm.value.username, loginForm.value.password)
+    isLoggedIn.value = true
+    showLogin.value = false
+    activeSection.value = 'users'
+  } catch (e) {
+    loginError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    loginLoading.value = false
+  }
+}
 </script>
 
 <style scoped>
@@ -143,7 +221,66 @@ body {
   justify-content: space-between;
   gap: 20px;
   min-height: 72px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+}
+
+.auth-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0;
+  padding: 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.auth-btn {
+  border: none;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.auth-btn i {
+  font-size: 14px;
+}
+
+.auth-btn-user {
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.auth-btn-user:hover {
+  background: #f8fafc;
+  transform: translateY(-1px);
+}
+
+.auth-btn-logout {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+  border: 1px solid rgba(255, 255, 255, 0.36);
+}
+
+.auth-btn-logout:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.auth-btn-login {
+  color: #0f172a;
+  background: #ffffff;
+}
+
+.auth-btn-login:hover {
+  background: #f8fafc;
+  transform: translateY(-1px);
 }
 
 .title-group {
@@ -163,12 +300,18 @@ body {
 }
 
 .module-tabs {
+  flex: 1;
+  min-width: 0;
   display: flex;
+  flex-wrap: nowrap;
+  justify-content: center;
   gap: 8px;
   background: rgba(255, 255, 255, 0.1);
   border-radius: 8px;
   padding: 4px;
   margin: 10px 0;
+  max-width: 100%;
+  overflow-x: auto;
 }
 
 .tab-btn {
@@ -299,5 +442,26 @@ body {
   margin: 0;
   display: block;
   background: #fff;
+}
+
+.login-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 1300;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.login-card {
+  width: min(420px, 100%);
+}
+
+.login-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 </style>
