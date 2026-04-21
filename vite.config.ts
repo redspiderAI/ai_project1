@@ -35,7 +35,7 @@ function buildAmapGeocodeProxy(): Record<string, ProxyOptions> {
   }
 }
 
-/** 嵌套「AI 比价」页请求 `/tl/*`、`/auth/*`；与 AI 预测同源走代理，避免浏览器直连 IP:8002 触发 CORS */
+/** 比价/库房/品类等请求 `/tl/*`、`/auth/*`；走代理避免浏览器直连触发 CORS */
 function buildTlAuthProxy(env: Record<string, string>): Record<string, ProxyOptions> {
   const raw = (env.VITE_TL_TARGET || env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
   const target = raw.replace(/\/+$/, '')
@@ -43,7 +43,6 @@ function buildTlAuthProxy(env: Record<string, string>): Record<string, ProxyOpti
   const common = { target, changeOrigin: true, secure } satisfies ProxyOptions
   return {
     '/tl': common,
-    '/t1': common,
     '/auth': common,
   }
 }
@@ -75,6 +74,11 @@ function buildAiDetectionProxy(env: Record<string, string>): Record<string, Prox
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
+  if (mode === 'development') {
+    const tl = (env.VITE_TL_TARGET || env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
+    const api = (env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
+    console.info(`[vite] 开发代理: /tl /auth → ${tl}；/api/v1 /delivery-history /forecast → ${api}`)
+  }
   const apiProxy = {
     ...buildApiProxy(env),
     ...buildTlAuthProxy(env),

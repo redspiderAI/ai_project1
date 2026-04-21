@@ -72,6 +72,88 @@ export async function fetchTlWarehouses(): Promise<Record<string, unknown>[]> {
   return unwrapList(raw)
 }
 
+/** TL 列表类接口：校验业务 code（与 /tl 返回体一致） */
+function assertTlBizCode200(raw: unknown, ctx: string): void {
+  if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as { code?: number; message?: string }
+    if (o.code != null && o.code !== 200) {
+      const msg = o.message ? String(o.message) : `code ${o.code}`
+      throw new Error(`${ctx}：${msg}`)
+    }
+  }
+}
+
+/**
+ * 从 get_warehouses / get_smelters 等响应中取出本页行。
+ * 分页时 `data` 多为 `{ list, total, page, size }`；不传 page 时 `data` 可能直接为数组。
+ */
+function extractTlListPayload(raw: unknown): { rows: Record<string, unknown>[]; total?: number } {
+  const data = unwrapData(raw)
+  if (Array.isArray(data)) {
+    return {
+      rows: data.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object'),
+    }
+  }
+  if (data != null && typeof data === 'object' && Array.isArray((data as { list?: unknown }).list)) {
+    const d = data as { list: unknown[]; total?: number }
+    const rows = (d.list || []).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    return { rows, total: typeof d.total === 'number' ? d.total : undefined }
+  }
+  return { rows: unwrapList(raw) }
+}
+
+/** 库房/冶炼厂分页：每页条数（你方要求 200；若后端限制 size，可改为 100） */
+const TL_LIST_PAGE_SIZE = 200
+
+async function fetchTlListAll(
+  pathNoQuery: string,
+  ctx: string,
+): Promise<Record<string, unknown>[]> {
+  const raw0 = await tlGetJson(pathNoQuery)
+  assertTlBizCode200(raw0, ctx)
+  const data0 = unwrapData(raw0)
+  if (Array.isArray(data0)) {
+    return data0.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+  }
+
+  const pageSize = TL_LIST_PAGE_SIZE
+  const first = extractTlListPayload(raw0)
+  const all: Record<string, unknown>[] = [...first.rows]
+  let total = first.total
+  let page = 2
+
+  if (first.rows.length < pageSize) {
+    return all
+  }
+  if (total != null && all.length >= total) {
+    return all
+  }
+
+  const sep = pathNoQuery.includes('?') ? '&' : '?'
+  while (page <= 500) {
+    const raw = await tlGetJson(`${pathNoQuery}${sep}page=${page}&size=${pageSize}`)
+    assertTlBizCode200(raw, ctx)
+    const { rows, total: t2 } = extractTlListPayload(raw)
+    if (t2 != null) total = t2
+    all.push(...rows)
+    if (rows.length < pageSize) break
+    if (total != null && all.length >= total) break
+    page += 1
+  }
+
+  return all
+}
+
+/** 仓库全量（分页拉齐，地图打点）。GET /tl/get_warehouses；与单页 `fetchTlWarehouses` 同源。 */
+export async function fetchTlWarehousesAll(): Promise<Record<string, unknown>[]> {
+  return fetchTlListAll('/tl/get_warehouses', '仓库列表')
+}
+
+/** 冶炼厂全量（地图打点）；逻辑同仓库：先无参，再 page/size 直至取完 */
+export async function fetchTlSmeltersAll(): Promise<Record<string, unknown>[]> {
+  return fetchTlListAll('/tl/get_smelters', '冶炼厂列表')
+}
+
 export async function fetchTlSmelters(): Promise<Record<string, unknown>[]> {
   const raw = await tlGetJson('/tl/get_smelters')
   return unwrapList(raw)
@@ -84,6 +166,7 @@ export async function fetchTlWarehouseTypes(includeInactive = false): Promise<Re
   return unwrapList(raw)
 }
 
+/** POST /tl/get_comparison，请求体字段为英文 snake_case（与后端约定一致） */
 export async function fetchTlComparison(
   body: Record<string, unknown>,
 ): Promise<Record<string, unknown>[]> {
@@ -91,14 +174,37 @@ export async function fetchTlComparison(
   return unwrapList(unwrapData(raw))
 }
 
-/** 品类列表（Swagger: GET /t1/get_categories） */
-export type T1CategoryRow = {
-  品类id: number
-  品类名: string
+/**
+ * 智能比价完整响应（含 `冶炼厂利润排行`、`最优价排序口径` 等），与嵌入页 `price_system` 一致校验 `code===200`。
+ */
+export async function postTlGetComparison(
+  body: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const raw = await tlPostJson('/tl/get_comparison', body)
+  if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as { code?: number; message?: string }
+    if (o.code != null && o.code !== 200) {
+      const msg = o.message ? String(o.message) : `业务码 ${o.code}`
+      throw new Error(`比价失败：${msg}`)
+    }
+    return raw as Record<string, unknown>
+  }
+  return { data: raw }
 }
 
-export async function fetchT1Categories(): Promise<T1CategoryRow[]> {
-  const raw = await tlGetJson('/t1/get_categories')
+/** 从比价响应中取出明细行（`data` / `list` 等，与 unwrapList 一致） */
+export function tlUnwrapComparisonDetails(raw: Record<string, unknown>): Record<string, unknown>[] {
+  return unwrapList(unwrapData(raw))
+}
+
+/** 品类列表（GET /tl/get_categories）；兼容后端英文字段与历史中文字段 */
+export type TlCategoryRow = {
+  id: number
+  name: string
+}
+
+export async function fetchTlCategories(): Promise<TlCategoryRow[]> {
+  const raw = await tlGetJson('/tl/get_categories')
   if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
     const o = raw as { code?: number; message?: string }
     if (o.code != null && o.code !== 200) {
@@ -109,13 +215,13 @@ export async function fetchT1Categories(): Promise<T1CategoryRow[]> {
   const list = unwrapList(raw)
   return list
     .map((row) => {
-      const id = row['品类id'] ?? row['category_id'] ?? row['id']
-      const name = row['品类名'] ?? row['name'] ?? row['品类名称']
-      const 品类id = id != null && id !== '' ? Number(id) : NaN
-      const 品类名 = name != null ? String(name).trim() : ''
-      return { 品类id, 品类名 }
+      const id = row['category_id'] ?? row['品类id'] ?? row['id']
+      const name = row['category_name'] ?? row['品类名'] ?? row['name'] ?? row['品类名称']
+      const nid = id != null && id !== '' ? Number(id) : NaN
+      const nname = name != null ? String(name).trim() : ''
+      return { id: nid, name: nname }
     })
-    .filter((x) => !Number.isNaN(x.品类id) && x.品类名 !== '')
+    .filter((x) => !Number.isNaN(x.id) && x.name !== '')
 }
 
 export async function fetchForecastDetail(
@@ -131,7 +237,7 @@ export async function fetchForecastDetail(
     search.append(key, String(value))
   }
   const query = search.toString()
-  const path = `/forecast/明细${query ? `?${query}` : ''}`
+  const path = `/forecast/details${query ? `?${query}` : ''}`
   const raw = await tlGetJson(path)
   const data = unwrapData(raw)
   if (data && typeof data === 'object' && Array.isArray((data as { items?: unknown[] }).items)) {

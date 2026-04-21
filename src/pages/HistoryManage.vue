@@ -465,7 +465,7 @@ const summaryData = ref<SummaryRow[]>([])
 const total = ref(0)
 const selectedRows = ref<string[]>([])
 
-// 预览数据（与 POST /api/v1/送货历史/import 一致：上传整份原文件，字段名 file）
+// 预览数据（与 POST …/delivery-history/import 一致：上传整份原文件，字段名 file）
 const previewData = ref<PreviewRow[]>([])
 const selectedPreviewRows = ref<number[]>([])
 const previewTotalRows = ref(0)

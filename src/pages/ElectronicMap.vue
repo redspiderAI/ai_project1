@@ -8,13 +8,55 @@
             库房 / 冶炼厂分布
           </span>
           <span class="emap-toolbar-hint text-muted small"
-            >红色圆点为演示：10 处公开可查地址（5 冶炼厂 + 5 交割库），任意缩放均可见；点击可查看详情并放大。</span
+            >库房与冶炼厂均由接口加载。请先在下方选择<strong>比价类型</strong>并为品类填写<strong>吨数</strong>（至少一项
+            &gt; 0），再点击库房进行比价并绘制流向箭头。</span
           >
         </div>
-        <button type="button" class="btn btn-sm btn-primary" :disabled="loading" @click="loadAndPlot">
-          <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
-          {{ loading ? '加载中…' : '刷新数据' }}
-        </button>
+        <div class="emap-toolbar-actions">
+          <div class="emap-field">
+            <label class="emap-field-label" for="emap-comparison-type">比价类型</label>
+            <select
+              id="emap-comparison-type"
+              v-model="comparisonType"
+              class="form-select form-select-sm emap-select"
+            >
+              <option value="base">基准价比价</option>
+              <option value="tax3">3%含税价比价</option>
+            </select>
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" :disabled="loading" @click="loadAndPlot">
+            <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
+            {{ loading ? '加载中…' : '刷新数据' }}
+          </button>
+        </div>
+      </div>
+      <div class="emap-toolbar-row emap-toolbar-row--categories">
+        <div class="emap-cat-toolbar">
+          <div class="emap-cat-toolbar-head">
+            <span class="emap-field-label">回收品类（吨）</span>
+            <span v-if="categoriesLoading" class="text-muted small">加载中…</span>
+            <span v-else-if="categoriesError" class="emap-cat-toolbar-err small">{{ categoriesError }}</span>
+            <span v-else class="text-muted small">勾选品类并填写吨数，至少一项 &gt; 0</span>
+          </div>
+          <div v-if="categories.length" class="emap-cat-toolbar-list">
+            <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
+              <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
+              <span class="emap-cat-name">{{ c.name }}</span>
+              <input
+                v-model="categoryPrefs[c.id].tons"
+                type="number"
+                min="0"
+                step="0.01"
+                class="form-control form-control-sm emap-cat-tons"
+                placeholder="吨"
+                :disabled="!categoryPrefs[c.id].selected"
+              />
+            </label>
+          </div>
+          <div v-else-if="!categoriesLoading && !categoriesError" class="text-muted small">
+            暂无品类，请稍后刷新或检查接口。
+          </div>
+        </div>
       </div>
     </div>
     <div ref="mapWrapRef" class="emap-map-wrap">
@@ -42,11 +84,20 @@
               {{ forecastLoading ? '预测中…' : '预测送货量' }}
             </button>
           </div>
-          <div v-if="comparisonTop3.length" class="emap-side-block">
-            <div class="emap-side-subtitle">比价 Top3 冶炼厂</div>
-            <div v-for="item in comparisonTop3" :key="`${item.rank}-${item.smelter}`" class="emap-rank-item">
-              <span>#{{ item.rank }} {{ item.smelter }}</span>
-              <span class="text-success">净收益 {{ formatNum(item.netProfit) }}</span>
+          <div v-if="comparisonRanks.length" class="emap-side-block">
+            <div class="emap-side-subtitle">
+              冶炼厂利润排行
+              <span v-if="lastComparisonSortKey" class="text-muted fw-normal">（{{ lastComparisonSortKey }}）</span>
+            </div>
+            <div class="emap-rank-scroll">
+              <div
+                v-for="item in comparisonRanks"
+                :key="`${item.rank}-${item.smelter}`"
+                class="emap-rank-item"
+              >
+                <span>#{{ item.rank }} {{ item.smelter }}</span>
+                <span class="text-success">净收益 {{ formatNum(item.netProfit) }}</span>
+              </div>
             </div>
           </div>
           <div v-if="forecastText" class="emap-side-block">
@@ -54,7 +105,7 @@
             <div>{{ forecastText }}</div>
           </div>
         </template>
-        <div v-else class="text-muted">点击任意库房点位，自动执行比价并展示前 3 连线。</div>
+        <div v-else class="text-muted">点击业务库房点位，将按当前比价类型与品类吨数自动比价，并绘制指向冶炼厂的箭头。</div>
         <div v-if="compareError" class="emap-side-error">{{ compareError }}</div>
       </div>
       <div class="emap-legend">
@@ -64,25 +115,6 @@
         <span class="emap-legend-item"
           ><span class="emap-legend-tri"></span> 冶炼厂（接口）</span
         >
-        <span class="emap-legend-item"
-          ><span class="emap-legend-dot emap-legend-dot--demo"></span> 演示（红圆点 · 固定大小）</span
-        >
-      </div>
-      <div class="emap-categories-card" aria-label="品类列表">
-        <div class="emap-categories-head">
-          <span class="emap-categories-title">回收品类</span>
-          <span v-if="categoriesLoading" class="emap-categories-status text-muted small">加载中…</span>
-        </div>
-        <div class="emap-categories-body">
-          <div v-if="categoriesError" class="emap-categories-error small">{{ categoriesError }}</div>
-          <ul v-else-if="categories.length" class="emap-categories-list list-unstyled mb-0">
-            <li v-for="row in categories" :key="row.品类id" class="emap-categories-item">
-              <span class="emap-categories-id">{{ row.品类id }}</span>
-              <span class="emap-categories-name">{{ row.品类名 }}</span>
-            </li>
-          </ul>
-          <div v-else class="text-muted small">暂无数据</div>
-        </div>
       </div>
     </div>
     <div v-if="loadError" class="alert alert-warning m-3 mb-0" role="alert">{{ loadError }}</div>
@@ -90,7 +122,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref, shallowRef } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
@@ -98,14 +130,14 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import {
   fetchForecastDetail,
-  fetchT1Categories,
-  fetchTlComparison,
-  fetchTlSmelters,
-  fetchTlWarehouses,
+  fetchTlCategories,
+  fetchTlSmeltersAll,
   fetchTlWarehouseTypes,
-  type T1CategoryRow,
+  fetchTlWarehousesAll,
+  postTlGetComparison,
+  tlUnwrapComparisonDetails,
+  type TlCategoryRow,
 } from '../api/tlApi'
-import { mapDemonstrationPoints } from '../data/mapDemonstrationPoints'
 
 type MapPoint = {
   kind: 'warehouse' | 'smelter'
@@ -132,6 +164,7 @@ const GAODE_TILE =
   'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}'
 
 const DEFAULT_WAREHOUSE_COLOR = '#2563eb'
+const MAX_MAP_FLOW_TARGETS = 30
 
 const mapWrapRef = ref<HTMLElement | null>(null)
 const mapElRef = ref<HTMLElement | null>(null)
@@ -139,19 +172,37 @@ const mapRef = shallowRef<L.Map | null>(null)
 const markerLayerRef = shallowRef<L.LayerGroup | null>(null)
 const flowLayerRef = shallowRef<L.LayerGroup | null>(null)
 const topTipLayerRef = shallowRef<L.LayerGroup | null>(null)
-const demoCircleLayerRef = shallowRef<L.LayerGroup | null>(null)
-
 const loading = ref(false)
 const loadError = ref('')
-const categories = ref<T1CategoryRow[]>([])
+const categories = ref<TlCategoryRow[]>([])
 const categoriesLoading = ref(false)
 const categoriesError = ref('')
+
+function ensureCategoryPrefsForList(list: TlCategoryRow[]) {
+  for (const c of list) {
+    if (categoryPrefs[c.id] === undefined) {
+      categoryPrefs[c.id] = { selected: true, tons: '0' }
+    }
+  }
+}
+
+watch(
+  categories,
+  (list) => {
+    ensureCategoryPrefsForList(list)
+  },
+  { deep: true, immediate: true },
+)
 const compareLoading = ref(false)
 const forecastLoading = ref(false)
 const compareError = ref('')
 const forecastText = ref('')
 const selectedWarehouse = ref<MapPoint | null>(null)
-const comparisonTop3 = ref<ComparisonRankItem[]>([])
+const comparisonType = ref<'base' | 'tax3'>('base')
+/** 与品类 id 对应：默认全选、吨数默认 1（与智能比价一致可改） */
+const categoryPrefs = reactive<Record<number, { selected: boolean; tons: string }>>({})
+const comparisonRanks = ref<ComparisonRankItem[]>([])
+const lastComparisonSortKey = ref('')
 const allWarehousePoints = ref<MapPoint[]>([])
 const allSmelterPoints = ref<MapPoint[]>([])
 
@@ -251,16 +302,45 @@ function buildTypeColorMap(types: Record<string, unknown>[]): Map<number, string
   return m
 }
 
-/** 与比价「库房列表」一致：优先库房自带颜色字段，否则按类型 id 查类型表 */
+/** 地图图钉颜色：优先后端「颜色配置」；不用「库房类型颜色配置」打点（该字段仅用于弹窗内「类型」文案） */
 function resolveWarehousePinColor(
   row: Record<string, unknown>,
   typeColorById: Map<number, string>,
 ): string {
-  const own = pickStr(row, ['颜色配置', '仓库颜色配置', '库房类型颜色配置', 'color', '颜色', 'color_config'])
+  const main = pickStr(row, ['颜色配置'])
+  if (main) return safeCssColor(main, DEFAULT_WAREHOUSE_COLOR)
+
+  const whColorObj = row['仓库颜色配置']
+  if (whColorObj != null && typeof whColorObj === 'object' && !Array.isArray(whColorObj)) {
+    const marker = (whColorObj as { marker?: unknown }).marker
+    if (marker != null && String(marker).trim() !== '') {
+      return safeCssColor(String(marker).trim(), DEFAULT_WAREHOUSE_COLOR)
+    }
+  }
+  const own = pickStr(row, ['仓库颜色配置', 'color', '颜色', 'color_config'])
   if (own) return safeCssColor(own, DEFAULT_WAREHOUSE_COLOR)
   const tid = pickNumber(row, ['仓库类型id', 'warehouse_type_id', 'type_id', '类型id'])
   if (tid != null && typeColorById.has(tid)) return typeColorById.get(tid)!
   return DEFAULT_WAREHOUSE_COLOR
+}
+
+/** 库房弹窗 HTML：「类型」用「库房类型颜色配置」着色 */
+function warehousePopupHtml(p: MapPoint): string {
+  const row = p.raw
+  const typeName = pickStr(row, ['类型', 'type', 'warehouse_type_name', '类型名'])
+  const typeColorRaw = pickStr(row, ['库房类型颜色配置', '类型颜色配置'])
+  const typeColor = typeColorRaw
+    ? safeCssColor(typeColorRaw, '#4b5563')
+    : '#4b5563'
+  const typeBlock =
+    typeName !== ''
+      ? `<div class="emap-popup-type"><span class="emap-popup-type-label">类型：</span><span class="emap-popup-type-value" style="color:${escapeHtml(
+          typeColor,
+        )}">${escapeHtml(typeName)}</span></div>`
+      : ''
+  return `<div class="emap-popup emap-popup--warehouse"><strong>${escapeHtml(p.title)}</strong><br/>${typeBlock}<span class="text-muted small">${escapeHtml(
+    p.subtitle,
+  )}</span></div>`
 }
 
 function initMap() {
@@ -281,12 +361,10 @@ function initMap() {
   const markerLayer = L.layerGroup().addTo(map)
   const flowLayer = L.layerGroup().addTo(map)
   const topTipLayer = L.layerGroup().addTo(map)
-  const demoCircleLayer = L.layerGroup().addTo(map)
   mapRef.value = map
   markerLayerRef.value = markerLayer
   flowLayerRef.value = flowLayer
   topTipLayerRef.value = topTipLayer
-  demoCircleLayerRef.value = demoCircleLayer
 
   if (mapWrapRef.value) {
     resizeObs = new ResizeObserver(() => {
@@ -317,54 +395,6 @@ function smelterIcon(): L.DivIcon {
   })
 }
 
-function renderDemoCircleMarkers() {
-  const map = mapRef.value
-  const demoLayer = demoCircleLayerRef.value
-  if (!map || !demoLayer) return
-  demoLayer.clearLayers()
-
-  for (const d of mapDemonstrationPoints) {
-    const kindLabel = d.kind === 'smelter' ? '冶炼厂（演示）' : '仓库（演示）'
-    const srcHtml = d.sourceUrl
-      ? `<a href="${escapeHtml(d.sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
-          d.sourceLabel,
-        )}</a>`
-      : escapeHtml(d.sourceLabel)
-
-    const cm = L.circleMarker([d.lat, d.lng], {
-      radius: 6,
-      weight: 2,
-      color: '#ffffff',
-      fillColor: '#dc2626',
-      fillOpacity: 0.95,
-      pane: 'markerPane',
-    })
-
-    cm.bindPopup(
-      `<div class="emap-popup emap-popup--demo"><strong>${escapeHtml(d.title)}</strong><br/>
-      <span class="emap-popup-kind">${escapeHtml(kindLabel)}</span><br/>
-      <div class="emap-popup-addr">${escapeHtml(d.address)}</div>
-      <p class="emap-popup-note small mb-1">${escapeHtml(d.note)}</p>
-      <div class="small text-muted">数据来源：${srcHtml}</div></div>`,
-      { maxWidth: 300 },
-    )
-
-    cm.bindTooltip(escapeHtml(d.title), {
-      direction: 'top',
-      offset: [0, -10],
-      className: 'emap-demo-tooltip',
-    })
-
-    cm.on('click', () => {
-      const targetZoom = Math.max(map.getZoom(), 14)
-      map.flyTo([d.lat, d.lng], targetZoom, { duration: 0.45 })
-      window.setTimeout(() => cm.openPopup(), 480)
-    })
-
-    cm.addTo(demoLayer)
-  }
-}
-
 function renderMarkers(points: MapPoint[]) {
   const map = mapRef.value
   const markerLayer = markerLayerRef.value
@@ -378,11 +408,9 @@ function renderMarkers(points: MapPoint[]) {
     const icon =
       p.kind === 'warehouse' ? warehouseIcon(p.pinColor ?? DEFAULT_WAREHOUSE_COLOR) : smelterIcon()
     const marker = L.marker([p.lat, p.lng], { icon })
-    marker.bindPopup(
-      `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="text-muted small">${escapeHtml(
-        p.subtitle,
-      )}</span></div>`,
-    )
+    const popupHtml =
+      p.kind === 'warehouse' ? warehousePopupHtml(p) : `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="text-muted small">${escapeHtml(p.subtitle)}</span></div>`
+    marker.bindPopup(popupHtml)
     if (p.kind === 'warehouse') {
       marker.on('click', () => {
         selectedWarehouse.value = p
@@ -393,11 +421,8 @@ function renderMarkers(points: MapPoint[]) {
     marker.addTo(markerLayer)
   }
 
-  renderDemoCircleMarkers()
-
   const bounds = L.latLngBounds([])
   for (const p of points) bounds.extend([p.lat, p.lng])
-  for (const d of mapDemonstrationPoints) bounds.extend([d.lat, d.lng])
   if (bounds.isValid()) {
     map.fitBounds(bounds.pad(0.12), { maxZoom: 14, animate: true })
   }
@@ -412,6 +437,8 @@ function escapeHtml(s: string): string {
 }
 
 function activeRow(row: Record<string, unknown>): boolean {
+  const st = row.status ?? row['状态']
+  if (st === 0 || st === '0') return false
   const v = row.is_active ?? row.isActive ?? row.active
   if (v === false || v === 0 || v === '0') return false
   return true
@@ -429,8 +456,118 @@ function formatNum(n: number): string {
 function clearComparisonOverlays() {
   flowLayerRef.value?.clearLayers()
   topTipLayerRef.value?.clearLayers()
-  comparisonTop3.value = []
+  comparisonRanks.value = []
+  lastComparisonSortKey.value = ''
   compareError.value = ''
+}
+
+function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
+  const ids: number[] = []
+  let totalTons = 0
+  for (const c of categories.value) {
+    const pref = categoryPrefs[c.id]
+    if (!pref?.selected) continue
+    const t = parseFloat(String(pref.tons ?? '').replace(/,/g, ''))
+    if (Number.isFinite(t) && t > 0) {
+      ids.push(c.id)
+      totalTons += t
+    }
+  }
+  return { ids, totalTons }
+}
+
+/** 与嵌入页智能比价相同字段（中文键名） */
+function buildSmartComparisonBody(
+  warehouseId: number,
+  smelterIds: number[],
+  categoryIds: number[],
+  totalTons: number,
+  priceMode: 'base' | 'tax3',
+): Record<string, unknown> {
+  const isTax3 = priceMode === 'tax3'
+  return {
+    选中仓库id列表: [warehouseId],
+    冶炼厂id列表: smelterIds,
+    品类id列表: categoryIds,
+    price_type: isTax3 ? '3pct' : null,
+    吨数: totalTons,
+    运费计价方式: 'per_ton',
+    每车吨数: 35,
+    最优价计税口径列表: isTax3 ? ['3pct'] : ['base'],
+    最优价排序口径: isTax3 ? '3pct' : 'base',
+  }
+}
+
+function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const φ1 = (lat1 * Math.PI) / 180
+  const φ2 = (lat2 * Math.PI) / 180
+  const Δλ = ((lng2 - lng1) * Math.PI) / 180
+  const y = Math.sin(Δλ) * Math.cos(φ2)
+  const x = Math.cos(φ1) * Math.sin(φ2) - Math.sin(φ1) * Math.cos(φ2) * Math.cos(Δλ)
+  return (Math.atan2(y, x) * 180) / Math.PI
+}
+
+function pointAlongFrac(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+  t: number,
+): [number, number] {
+  return [lat1 + (lat2 - lat1) * t, lng1 + (lng2 - lng1) * t]
+}
+
+function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
+  if (!Array.isArray(arr)) return []
+  const out: ComparisonRankItem[] = []
+  let fallback = 0
+  for (const item of arr) {
+    if (!item || typeof item !== 'object') continue
+    const row = item as Record<string, unknown>
+    const smelter = pickStr(row, [
+      '冶炼厂',
+      'smelter',
+      'smelter_name',
+      '冶炼厂名',
+      'factory_name',
+      'name',
+      '厂名',
+    ])
+    if (!smelter) continue
+    fallback += 1
+    const rank = pickNumber(row, ['rank', '名次', '排序', '排行', '排名']) ?? fallback
+    const netProfit =
+      pickNumber(row, ['净收益', 'profit', '净利润', '收益', 'net_profit', '总利润', '利润']) ?? 0
+    const totalRecovery =
+      pickNumber(row, ['回收额', 'totalRecovery', 'materialSum', '物料总价', 'total_recovery']) ?? 0
+    const freightPerTon =
+      pickNumber(row, ['运费单价', 'freightPerTon', 'freight_per_ton', '运费每吨']) ?? 0
+    const qtySum = pickNumber(row, ['吨数', 'quantity', 'qtySum', 'qty', '需求吨数']) ?? 0
+    out.push({
+      rank,
+      smelter,
+      netProfit: toDisplayNum(netProfit),
+      totalRecovery: toDisplayNum(totalRecovery),
+      freightPerTon: toDisplayNum(freightPerTon),
+      qtySum: toDisplayNum(qtySum),
+    })
+  }
+  return out.sort((a, b) => a.rank - b.rank)
+}
+
+function rankingsFromComparisonResponse(
+  raw: Record<string, unknown>,
+  detailRows: Record<string, unknown>[],
+): ComparisonRankItem[] {
+  const fromApi = parseSmelterProfitRankArray(raw['冶炼厂利润排行'])
+  if (fromApi.length) return rerankSequentially(fromApi)
+  return aggregateComparisonRows(detailRows)
+}
+
+/** 后端若已带 rank，仍按排序重编号，避免间断 */
+function rerankSequentially(items: ComparisonRankItem[]): ComparisonRankItem[] {
+  const sorted = [...items].sort((a, b) => a.rank - b.rank || b.netProfit - a.netProfit)
+  return sorted.map((x, i) => ({ ...x, rank: i + 1 }))
 }
 
 function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRankItem[] {
@@ -439,12 +576,14 @@ function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRan
     { smelter: string; materialSum: number; freightSum: number; freightCount: number; qtySum: number }
   >()
   for (const row of rows) {
-    const smelter = pickStr(row, ['冶炼厂', '冶炼厂名', 'smelter', 'factory_name']) || '未知冶炼厂'
+    const smelter =
+      pickStr(row, ['smelter_name', '冶炼厂', '冶炼厂名', 'smelter', 'factory_name']) || '未知冶炼厂'
     const unitPrice =
-      pickNumber(row, ['最优价', '价格', 'price', 'base_price', '不含税价', '3pct_price']) ?? 0
+      pickNumber(row, ['unit_price', '最优价', '价格', 'price', 'base_price', '不含税价', '3pct_price']) ??
+      0
     const freight =
-      pickNumber(row, ['运费', '运费单价', 'freight', 'freight_per_ton', '运费每吨']) ?? 0
-    const qty = pickNumber(row, ['吨数', '数量', 'qty', 'weight', '需求吨数']) ?? 1
+      pickNumber(row, ['freight_per_ton', '运费', '运费单价', 'freight', '运费每吨']) ?? 0
+    const qty = pickNumber(row, ['quantity', '吨数', '数量', 'qty', 'weight', '需求吨数']) ?? 1
     const key = smelter
     if (!grouped.has(key)) {
       grouped.set(key, { smelter, materialSum: 0, freightSum: 0, freightCount: 0, qtySum: 0 })
@@ -456,11 +595,10 @@ function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRan
     g.qtySum += Math.max(0, qty)
   }
   return [...grouped.values()]
-    .map((g, idx) => {
+    .map((g) => {
       const freightPerTon = g.freightCount > 0 ? g.freightSum / g.freightCount : 0
       const netProfit = g.materialSum - freightPerTon * g.qtySum
       return {
-        rank: idx + 1,
         smelter: g.smelter,
         netProfit: toDisplayNum(netProfit),
         totalRecovery: toDisplayNum(g.materialSum),
@@ -469,7 +607,6 @@ function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRan
       }
     })
     .sort((a, b) => b.netProfit - a.netProfit)
-    .slice(0, 3)
     .map((x, idx) => ({ ...x, rank: idx + 1 }))
 }
 
@@ -482,28 +619,43 @@ function findSmelterPoint(name: string): MapPoint | null {
   return loose ?? null
 }
 
-function renderComparisonOverlay(warehouse: MapPoint, top3: ComparisonRankItem[]) {
+function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[]) {
   const flowLayer = flowLayerRef.value
   const tipLayer = topTipLayerRef.value
   if (!flowLayer || !tipLayer) return
   flowLayer.clearLayers()
   tipLayer.clearLayers()
-  for (const row of top3) {
+  const palette = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#059669', '#0ea5e9']
+  const list = ranks.slice(0, MAX_MAP_FLOW_TARGETS)
+  for (let i = 0; i < list.length; i++) {
+    const row = list[i]!
     const smelter = findSmelterPoint(row.smelter)
     if (!smelter) continue
+    const color = palette[i % palette.length]!
     L.polyline(
       [
         [warehouse.lat, warehouse.lng],
         [smelter.lat, smelter.lng],
       ],
       {
-        color: '#2563eb',
+        color,
         weight: 3,
-        opacity: 0.9,
+        opacity: 0.88,
         dashArray: '10 10',
         className: 'emap-flow-line',
       },
     ).addTo(flowLayer)
+    const br = bearingDeg(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng)
+    const arrowPt = pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.82)
+    L.marker(arrowPt, {
+      icon: L.divIcon({
+        className: 'emap-flow-arrow-wrap',
+        html: `<div class="emap-flow-arrow" style="color:${color};transform:rotate(${br - 90}deg)">▶</div>`,
+        iconSize: [20, 20],
+        iconAnchor: [10, 10],
+      }),
+      interactive: false,
+    }).addTo(flowLayer)
     L.tooltip({
       permanent: true,
       direction: 'top',
@@ -529,46 +681,26 @@ async function runComparisonForWarehouse(warehouse: MapPoint) {
       .filter((x): x is number => x != null)
     if (!smelterIds.length) throw new Error('暂无可比价的冶炼厂')
 
-    let categoryIds: number[] = []
-    try {
-      const categoryRaw = await fetchTlComparison({
-        选中仓库id列表: [whId],
-        冶炼厂id列表: smelterIds,
-        品类id列表: [1],
-        吨数: 1,
-        运费计价方式: 'per_ton',
-        每车吨数: 35,
-        最优价计税口径列表: ['base'],
-        最优价排序口径: 'base',
-      })
-      if (categoryRaw.length > 0) {
-        const fromRows = [
-          ...new Set(
-            categoryRaw
-              .map((r) => pickNumber(r, ['品类id', 'category_id', 'id']))
-              .filter((x): x is number => x != null),
-          ),
-        ]
-        categoryIds = fromRows
-      }
-    } catch {
-      /* 兜底走固定品类 id */
+    const { ids: categoryIds, totalTons } = getSelectedCategoryPayload()
+    if (!categoryIds.length || totalTons <= 0) {
+      throw new Error('请至少勾选一个品类并填写大于 0 的吨数（单位：吨）')
     }
-    if (!categoryIds.length) categoryIds = [1, 2, 3, 4, 5]
 
-    const rows = await fetchTlComparison({
-      选中仓库id列表: [whId],
-      冶炼厂id列表: smelterIds,
-      品类id列表: categoryIds,
-      吨数: 35,
-      运费计价方式: 'per_ton',
-      每车吨数: 35,
-      最优价计税口径列表: ['base'],
-      最优价排序口径: 'base',
-    })
-    const top3 = aggregateComparisonRows(rows)
-    comparisonTop3.value = top3
-    renderComparisonOverlay(warehouse, top3)
+    const body = buildSmartComparisonBody(
+      whId,
+      smelterIds,
+      categoryIds,
+      totalTons,
+      comparisonType.value,
+    )
+    const raw = await postTlGetComparison(body)
+    const sortKey = raw['最优价排序口径']
+    lastComparisonSortKey.value =
+      sortKey != null && String(sortKey).trim() !== '' ? String(sortKey).trim() : ''
+    const detailRows = tlUnwrapComparisonDetails(raw)
+    const ranks = rankingsFromComparisonResponse(raw, detailRows)
+    comparisonRanks.value = ranks
+    renderComparisonOverlay(warehouse, ranks)
   } catch (err) {
     clearComparisonOverlays()
     compareError.value = err instanceof Error ? err.message : String(err)
@@ -614,7 +746,8 @@ async function loadCategories() {
   categoriesError.value = ''
   categoriesLoading.value = true
   try {
-    categories.value = await fetchT1Categories()
+    categories.value = await fetchTlCategories()
+    ensureCategoryPrefsForList(categories.value)
   } catch (e) {
     categories.value = []
     categoriesError.value = e instanceof Error ? e.message : String(e)
@@ -628,7 +761,7 @@ async function loadAndPlot() {
   loading.value = true
   void loadCategories()
   try {
-    const [whRows, smRows] = await Promise.all([fetchTlWarehouses(), fetchTlSmelters()])
+    const [whRows, smRows] = await Promise.all([fetchTlWarehousesAll(), fetchTlSmeltersAll()])
     let typeRows: Record<string, unknown>[] = []
     try {
       typeRows = await fetchTlWarehouseTypes(false)
@@ -674,8 +807,7 @@ async function loadAndPlot() {
     }
 
     if (!points.length) {
-      loadError.value =
-        '接口未返回可打点的经纬度，已仅展示下方「红色圆点」演示数据；可在业务系统为库房/冶炼厂补全坐标后刷新。'
+      loadError.value = '接口未返回可打点的库房或冶炼厂经纬度，请在业务系统补全坐标后刷新。'
     }
     renderMarkers(points)
   } catch (e) {
@@ -699,7 +831,6 @@ onBeforeUnmount(() => {
   markerLayerRef.value = null
   flowLayerRef.value = null
   topTipLayerRef.value = null
-  demoCircleLayerRef.value = null
 })
 </script>
 
@@ -725,6 +856,98 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+}
+
+.emap-toolbar-row--categories {
+  align-items: flex-start;
+  margin-bottom: 0;
+}
+
+.emap-toolbar-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.emap-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.emap-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #374151;
+  margin: 0;
+}
+
+.emap-select {
+  min-width: 132px;
+}
+
+.emap-cat-toolbar {
+  flex: 1;
+  min-width: 0;
+}
+
+.emap-cat-toolbar-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 8px;
+}
+
+.emap-cat-toolbar-err {
+  color: #b91c1c;
+}
+
+.emap-cat-toolbar-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  max-height: 120px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.emap-cat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.emap-cat-pill .form-check-input {
+  margin: 0;
+  flex-shrink: 0;
+}
+
+.emap-cat-name {
+  max-width: 8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emap-cat-tons {
+  width: 4.5rem;
+  flex-shrink: 0;
+}
+
+.emap-rank-scroll {
+  max-height: 220px;
+  overflow-y: auto;
+  padding-right: 4px;
 }
 
 .emap-toolbar-main {
@@ -850,16 +1073,6 @@ onBeforeUnmount(() => {
   background: #2563eb;
 }
 
-.emap-legend-dot--demo {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #dc2626;
-  border: 2px solid #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-  transform: none;
-}
-
 .emap-legend-tri {
   width: 0;
   height: 0;
@@ -869,84 +1082,6 @@ onBeforeUnmount(() => {
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
 }
 
-.emap-categories-card {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 1000;
-  width: 260px;
-  height: 200px;
-  display: flex;
-  flex-direction: column;
-  background: rgba(255, 255, 255, 0.96);
-  border-radius: 10px;
-  border: 1px solid #e5e7eb;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
-  font-size: 12px;
-}
-
-.emap-categories-head {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-bottom: 1px solid #e5e7eb;
-  background: #fafafa;
-  border-radius: 10px 10px 0 0;
-}
-
-.emap-categories-title {
-  font-weight: 600;
-  font-size: 13px;
-  color: #111827;
-}
-
-.emap-categories-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 6px 10px 8px;
-}
-
-.emap-categories-error {
-  color: #b91c1c;
-  line-height: 1.4;
-}
-
-.emap-categories-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.emap-categories-item {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  line-height: 1.35;
-  padding: 2px 0;
-  border-bottom: 1px dashed #f3f4f6;
-}
-
-.emap-categories-item:last-child {
-  border-bottom: none;
-}
-
-.emap-categories-id {
-  flex-shrink: 0;
-  min-width: 2rem;
-  font-variant-numeric: tabular-nums;
-  color: #6b7280;
-  font-size: 11px;
-}
-
-.emap-categories-name {
-  color: #111827;
-  word-break: break-all;
-}
 </style>
 
 <style>
@@ -977,41 +1112,41 @@ onBeforeUnmount(() => {
   font-size: 14px;
 }
 
-.emap-popup--demo .emap-popup-kind {
-  display: inline-block;
-  margin: 4px 0;
-  padding: 2px 8px;
-  border-radius: 4px;
-  background: #fee2e2;
-  color: #991b1b;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.emap-popup--demo .emap-popup-addr {
+.emap-popup--warehouse .emap-popup-type {
   margin: 6px 0;
+  font-size: 13px;
   line-height: 1.45;
 }
 
-.emap-popup--demo .emap-popup-note {
-  color: #4b5563;
-  margin-bottom: 0;
+.emap-popup--warehouse .emap-popup-type-label {
+  color: #6b7280;
+  font-weight: 500;
 }
 
-.leaflet-tooltip.emap-demo-tooltip {
-  padding: 6px 10px;
+.emap-popup--warehouse .emap-popup-type-value {
   font-weight: 600;
-  font-size: 13px;
-  color: #111827;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid rgba(220, 38, 38, 0.35);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
 }
 
 .emap-flow-line {
   stroke-dasharray: 10 10;
   animation: emap-flow 1s linear infinite;
+}
+
+.emap-flow-arrow-wrap {
+  background: transparent;
+  border: none;
+}
+
+.emap-flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff;
 }
 
 .emap-rank-tip {
