@@ -43,6 +43,7 @@ function buildTlAuthProxy(env: Record<string, string>): Record<string, ProxyOpti
   const common = { target, changeOrigin: true, secure } satisfies ProxyOptions
   return {
     '/tl': common,
+    '/t1': common,
     '/auth': common,
   }
 }

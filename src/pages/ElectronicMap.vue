@@ -2,10 +2,15 @@
   <div class="emap-shell">
     <div class="emap-toolbar card shadow-sm">
       <div class="emap-toolbar-row">
-        <span class="emap-title">
-          <i class="bi bi-map"></i>
-          库房 / 冶炼厂分布
-        </span>
+        <div class="emap-toolbar-main">
+          <span class="emap-title">
+            <i class="bi bi-map"></i>
+            库房 / 冶炼厂分布
+          </span>
+          <span class="emap-toolbar-hint text-muted small"
+            >红色圆点为演示：10 处公开可查地址（5 冶炼厂 + 5 交割库），任意缩放均可见；点击可查看详情并放大。</span
+          >
+        </div>
         <button type="button" class="btn btn-sm btn-primary" :disabled="loading" @click="loadAndPlot">
           <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
           {{ loading ? '加载中…' : '刷新数据' }}
@@ -57,8 +62,27 @@
           ><span class="emap-legend-dot emap-legend-dot--wh"></span> 库房（随类型颜色）</span
         >
         <span class="emap-legend-item"
-          ><span class="emap-legend-tri"></span> 冶炼厂</span
+          ><span class="emap-legend-tri"></span> 冶炼厂（接口）</span
         >
+        <span class="emap-legend-item"
+          ><span class="emap-legend-dot emap-legend-dot--demo"></span> 演示（红圆点 · 固定大小）</span
+        >
+      </div>
+      <div class="emap-categories-card" aria-label="品类列表">
+        <div class="emap-categories-head">
+          <span class="emap-categories-title">回收品类</span>
+          <span v-if="categoriesLoading" class="emap-categories-status text-muted small">加载中…</span>
+        </div>
+        <div class="emap-categories-body">
+          <div v-if="categoriesError" class="emap-categories-error small">{{ categoriesError }}</div>
+          <ul v-else-if="categories.length" class="emap-categories-list list-unstyled mb-0">
+            <li v-for="row in categories" :key="row.品类id" class="emap-categories-item">
+              <span class="emap-categories-id">{{ row.品类id }}</span>
+              <span class="emap-categories-name">{{ row.品类名 }}</span>
+            </li>
+          </ul>
+          <div v-else class="text-muted small">暂无数据</div>
+        </div>
       </div>
     </div>
     <div v-if="loadError" class="alert alert-warning m-3 mb-0" role="alert">{{ loadError }}</div>
@@ -74,11 +98,14 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import {
   fetchForecastDetail,
+  fetchT1Categories,
   fetchTlComparison,
   fetchTlSmelters,
   fetchTlWarehouses,
   fetchTlWarehouseTypes,
+  type T1CategoryRow,
 } from '../api/tlApi'
+import { mapDemonstrationPoints } from '../data/mapDemonstrationPoints'
 
 type MapPoint = {
   kind: 'warehouse' | 'smelter'
@@ -112,9 +139,13 @@ const mapRef = shallowRef<L.Map | null>(null)
 const markerLayerRef = shallowRef<L.LayerGroup | null>(null)
 const flowLayerRef = shallowRef<L.LayerGroup | null>(null)
 const topTipLayerRef = shallowRef<L.LayerGroup | null>(null)
+const demoCircleLayerRef = shallowRef<L.LayerGroup | null>(null)
 
 const loading = ref(false)
 const loadError = ref('')
+const categories = ref<T1CategoryRow[]>([])
+const categoriesLoading = ref(false)
+const categoriesError = ref('')
 const compareLoading = ref(false)
 const forecastLoading = ref(false)
 const compareError = ref('')
@@ -250,10 +281,12 @@ function initMap() {
   const markerLayer = L.layerGroup().addTo(map)
   const flowLayer = L.layerGroup().addTo(map)
   const topTipLayer = L.layerGroup().addTo(map)
+  const demoCircleLayer = L.layerGroup().addTo(map)
   mapRef.value = map
   markerLayerRef.value = markerLayer
   flowLayerRef.value = flowLayer
   topTipLayerRef.value = topTipLayer
+  demoCircleLayerRef.value = demoCircleLayer
 
   if (mapWrapRef.value) {
     resizeObs = new ResizeObserver(() => {
@@ -284,15 +317,61 @@ function smelterIcon(): L.DivIcon {
   })
 }
 
+function renderDemoCircleMarkers() {
+  const map = mapRef.value
+  const demoLayer = demoCircleLayerRef.value
+  if (!map || !demoLayer) return
+  demoLayer.clearLayers()
+
+  for (const d of mapDemonstrationPoints) {
+    const kindLabel = d.kind === 'smelter' ? '冶炼厂（演示）' : '仓库（演示）'
+    const srcHtml = d.sourceUrl
+      ? `<a href="${escapeHtml(d.sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(
+          d.sourceLabel,
+        )}</a>`
+      : escapeHtml(d.sourceLabel)
+
+    const cm = L.circleMarker([d.lat, d.lng], {
+      radius: 6,
+      weight: 2,
+      color: '#ffffff',
+      fillColor: '#dc2626',
+      fillOpacity: 0.95,
+      pane: 'markerPane',
+    })
+
+    cm.bindPopup(
+      `<div class="emap-popup emap-popup--demo"><strong>${escapeHtml(d.title)}</strong><br/>
+      <span class="emap-popup-kind">${escapeHtml(kindLabel)}</span><br/>
+      <div class="emap-popup-addr">${escapeHtml(d.address)}</div>
+      <p class="emap-popup-note small mb-1">${escapeHtml(d.note)}</p>
+      <div class="small text-muted">数据来源：${srcHtml}</div></div>`,
+      { maxWidth: 300 },
+    )
+
+    cm.bindTooltip(escapeHtml(d.title), {
+      direction: 'top',
+      offset: [0, -10],
+      className: 'emap-demo-tooltip',
+    })
+
+    cm.on('click', () => {
+      const targetZoom = Math.max(map.getZoom(), 14)
+      map.flyTo([d.lat, d.lng], targetZoom, { duration: 0.45 })
+      window.setTimeout(() => cm.openPopup(), 480)
+    })
+
+    cm.addTo(demoLayer)
+  }
+}
+
 function renderMarkers(points: MapPoint[]) {
   const map = mapRef.value
   const markerLayer = markerLayerRef.value
   if (!map || !markerLayer) return
   markerLayer.clearLayers()
   clearComparisonOverlays()
-  if (!points.length) return
 
-  const bounds = L.latLngBounds(points.map((p) => [p.lat, p.lng]))
   allWarehousePoints.value = points.filter((p) => p.kind === 'warehouse')
   allSmelterPoints.value = points.filter((p) => p.kind === 'smelter')
   for (const p of points) {
@@ -313,7 +392,15 @@ function renderMarkers(points: MapPoint[]) {
     }
     marker.addTo(markerLayer)
   }
-  map.fitBounds(bounds.pad(0.15), { maxZoom: 14, animate: true })
+
+  renderDemoCircleMarkers()
+
+  const bounds = L.latLngBounds([])
+  for (const p of points) bounds.extend([p.lat, p.lng])
+  for (const d of mapDemonstrationPoints) bounds.extend([d.lat, d.lng])
+  if (bounds.isValid()) {
+    map.fitBounds(bounds.pad(0.12), { maxZoom: 14, animate: true })
+  }
 }
 
 function escapeHtml(s: string): string {
@@ -523,9 +610,23 @@ async function runForecastForWarehouse(warehouse: MapPoint) {
   }
 }
 
+async function loadCategories() {
+  categoriesError.value = ''
+  categoriesLoading.value = true
+  try {
+    categories.value = await fetchT1Categories()
+  } catch (e) {
+    categories.value = []
+    categoriesError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    categoriesLoading.value = false
+  }
+}
+
 async function loadAndPlot() {
   loadError.value = ''
   loading.value = true
+  void loadCategories()
   try {
     const [whRows, smRows] = await Promise.all([fetchTlWarehouses(), fetchTlSmelters()])
     let typeRows: Record<string, unknown>[] = []
@@ -573,7 +674,8 @@ async function loadAndPlot() {
     }
 
     if (!points.length) {
-      loadError.value = '暂无可展示坐标：当前接口返回里没有有效的经纬度字段。'
+      loadError.value =
+        '接口未返回可打点的经纬度，已仅展示下方「红色圆点」演示数据；可在业务系统为库房/冶炼厂补全坐标后刷新。'
     }
     renderMarkers(points)
   } catch (e) {
@@ -597,6 +699,7 @@ onBeforeUnmount(() => {
   markerLayerRef.value = null
   flowLayerRef.value = null
   topTipLayerRef.value = null
+  demoCircleLayerRef.value = null
 })
 </script>
 
@@ -622,6 +725,18 @@ onBeforeUnmount(() => {
   gap: 12px;
   flex-wrap: wrap;
   margin-bottom: 8px;
+}
+
+.emap-toolbar-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.emap-toolbar-hint {
+  line-height: 1.45;
 }
 
 .emap-title {
@@ -735,6 +850,16 @@ onBeforeUnmount(() => {
   background: #2563eb;
 }
 
+.emap-legend-dot--demo {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #dc2626;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transform: none;
+}
+
 .emap-legend-tri {
   width: 0;
   height: 0;
@@ -742,6 +867,85 @@ onBeforeUnmount(() => {
   border-right: 7px solid transparent;
   border-bottom: 12px solid #c2410c;
   filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+}
+
+.emap-categories-card {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1000;
+  width: 260px;
+  height: 200px;
+  display: flex;
+  flex-direction: column;
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 10px;
+  border: 1px solid #e5e7eb;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.14);
+  font-size: 12px;
+}
+
+.emap-categories-head {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #e5e7eb;
+  background: #fafafa;
+  border-radius: 10px 10px 0 0;
+}
+
+.emap-categories-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #111827;
+}
+
+.emap-categories-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 10px 8px;
+}
+
+.emap-categories-error {
+  color: #b91c1c;
+  line-height: 1.4;
+}
+
+.emap-categories-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.emap-categories-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1.35;
+  padding: 2px 0;
+  border-bottom: 1px dashed #f3f4f6;
+}
+
+.emap-categories-item:last-child {
+  border-bottom: none;
+}
+
+.emap-categories-id {
+  flex-shrink: 0;
+  min-width: 2rem;
+  font-variant-numeric: tabular-nums;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+.emap-categories-name {
+  color: #111827;
+  word-break: break-all;
 }
 </style>
 
@@ -771,6 +975,38 @@ onBeforeUnmount(() => {
 
 .emap-popup strong {
   font-size: 14px;
+}
+
+.emap-popup--demo .emap-popup-kind {
+  display: inline-block;
+  margin: 4px 0;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #fee2e2;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.emap-popup--demo .emap-popup-addr {
+  margin: 6px 0;
+  line-height: 1.45;
+}
+
+.emap-popup--demo .emap-popup-note {
+  color: #4b5563;
+  margin-bottom: 0;
+}
+
+.leaflet-tooltip.emap-demo-tooltip {
+  padding: 6px 10px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #111827;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(220, 38, 38, 0.35);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.15);
 }
 
 .emap-flow-line {

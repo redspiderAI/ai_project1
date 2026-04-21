@@ -91,6 +91,33 @@ export async function fetchTlComparison(
   return unwrapList(unwrapData(raw))
 }
 
+/** 品类列表（Swagger: GET /t1/get_categories） */
+export type T1CategoryRow = {
+  品类id: number
+  品类名: string
+}
+
+export async function fetchT1Categories(): Promise<T1CategoryRow[]> {
+  const raw = await tlGetJson('/t1/get_categories')
+  if (raw != null && typeof raw === 'object' && !Array.isArray(raw)) {
+    const o = raw as { code?: number; message?: string }
+    if (o.code != null && o.code !== 200) {
+      const msg = o.message ? String(o.message) : `code ${o.code}`
+      throw new Error(`获取品类列表失败：${msg}`)
+    }
+  }
+  const list = unwrapList(raw)
+  return list
+    .map((row) => {
+      const id = row['品类id'] ?? row['category_id'] ?? row['id']
+      const name = row['品类名'] ?? row['name'] ?? row['品类名称']
+      const 品类id = id != null && id !== '' ? Number(id) : NaN
+      const 品类名 = name != null ? String(name).trim() : ''
+      return { 品类id, 品类名 }
+    })
+    .filter((x) => !Number.isNaN(x.品类id) && x.品类名 !== '')
+}
+
 export async function fetchForecastDetail(
   params: Record<string, string | number | Array<string | number>>,
 ): Promise<Record<string, unknown>[]> {
