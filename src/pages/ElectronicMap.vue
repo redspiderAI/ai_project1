@@ -1,63 +1,97 @@
 <template>
   <div class="emap-shell">
     <div class="emap-toolbar card shadow-sm">
-      <div class="emap-toolbar-row">
-        <div class="emap-toolbar-main">
-          <span class="emap-title">
-            <i class="bi bi-map"></i>
-            库房 / 冶炼厂分布
-          </span>
-          <span class="emap-toolbar-hint text-muted small"
-            >库房与冶炼厂均由接口加载。请先在下方选择<strong>比价类型</strong>并为品类填写<strong>吨数</strong>（至少一项
-            &gt; 0），再点击库房进行比价并绘制流向箭头。</span
-          >
-        </div>
-        <div class="emap-toolbar-actions">
-          <div class="emap-field">
-            <label class="emap-field-label" for="emap-comparison-type">比价类型</label>
-            <select
-              id="emap-comparison-type"
-              v-model="comparisonType"
-              class="form-select form-select-sm emap-select"
-            >
-              <option value="base">基准价比价</option>
-              <option value="tax3">3%含税价比价</option>
-            </select>
-          </div>
-          <button type="button" class="btn btn-sm btn-primary" :disabled="loading" @click="loadAndPlot">
-            <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
-            {{ loading ? '加载中…' : '刷新数据' }}
-          </button>
-        </div>
+      <div v-if="toolbarCollapsed" class="emap-toolbar-collapsed">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-secondary"
+          title="展开比价类型、品类吨数等设置"
+          @click="toggleToolbarCollapse"
+        >
+          <i class="bi bi-chevron-down" aria-hidden="true"></i>
+          展开设置
+        </button>
+        <span class="emap-title emap-title--compact">
+          <i class="bi bi-map"></i>
+          库房 / 冶炼厂分布
+        </span>
+        <button type="button" class="btn btn-sm btn-primary ms-auto" :disabled="loading" @click="loadAndPlot">
+          <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
+          {{ loading ? '加载中…' : '刷新数据' }}
+        </button>
       </div>
-      <div class="emap-toolbar-row emap-toolbar-row--categories">
-        <div class="emap-cat-toolbar">
-          <div class="emap-cat-toolbar-head">
-            <span class="emap-field-label">回收品类（吨）</span>
-            <span v-if="categoriesLoading" class="text-muted small">加载中…</span>
-            <span v-else-if="categoriesError" class="emap-cat-toolbar-err small">{{ categoriesError }}</span>
-            <span v-else class="text-muted small">勾选品类并填写吨数，至少一项 &gt; 0</span>
+      <template v-else>
+        <div class="emap-toolbar-row">
+          <div class="emap-toolbar-main">
+            <div class="emap-toolbar-heading">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-secondary emap-toolbar-collapse-btn"
+                title="收起筛选区，扩大地图可视区域"
+                @click="toggleToolbarCollapse"
+              >
+                <i class="bi bi-chevron-up" aria-hidden="true"></i>
+                收起
+              </button>
+              <div class="emap-toolbar-heading-text">
+                <span class="emap-title">
+                  <i class="bi bi-map"></i>
+                  库房 / 冶炼厂分布
+                </span>
+                <span class="emap-toolbar-hint text-muted small"
+                  >库房与冶炼厂均由接口加载。请先在下方选择<strong>比价类型</strong>并为品类填写<strong>吨数</strong>（至少一项
+                  &gt; 0），再点击库房进行比价并绘制流向箭头。</span
+                >
+              </div>
+            </div>
           </div>
-          <div v-if="categories.length" class="emap-cat-toolbar-list">
-            <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
-              <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
-              <span class="emap-cat-name">{{ c.name }}</span>
-              <input
-                v-model="categoryPrefs[c.id].tons"
-                type="number"
-                min="0"
-                step="0.01"
-                class="form-control form-control-sm emap-cat-tons"
-                placeholder="吨"
-                :disabled="!categoryPrefs[c.id].selected"
-              />
-            </label>
-          </div>
-          <div v-else-if="!categoriesLoading && !categoriesError" class="text-muted small">
-            暂无品类，请稍后刷新或检查接口。
+          <div class="emap-toolbar-actions">
+            <div class="emap-field">
+              <label class="emap-field-label" for="emap-comparison-type">比价类型</label>
+              <select
+                id="emap-comparison-type"
+                v-model="comparisonType"
+                class="form-select form-select-sm emap-select"
+              >
+                <option value="base">基准价比价</option>
+                <option value="tax3">3%含税价比价</option>
+              </select>
+            </div>
+            <button type="button" class="btn btn-sm btn-primary" :disabled="loading" @click="loadAndPlot">
+              <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
+              {{ loading ? '加载中…' : '刷新数据' }}
+            </button>
           </div>
         </div>
-      </div>
+        <div class="emap-toolbar-row emap-toolbar-row--categories">
+          <div class="emap-cat-toolbar">
+            <div class="emap-cat-toolbar-head">
+              <span class="emap-field-label">回收品类（吨）</span>
+              <span v-if="categoriesLoading" class="text-muted small">加载中…</span>
+              <span v-else-if="categoriesError" class="emap-cat-toolbar-err small">{{ categoriesError }}</span>
+              <span v-else class="text-muted small">勾选品类并填写吨数，至少一项 &gt; 0</span>
+            </div>
+            <div v-if="categories.length" class="emap-cat-toolbar-list">
+              <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
+                <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
+                <span class="emap-cat-name">{{ c.name }}</span>
+                <input
+                  v-model="categoryPrefs[c.id].tons"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  class="form-control form-control-sm emap-cat-tons"
+                  placeholder="吨"
+                  :disabled="!categoryPrefs[c.id].selected"
+                />
+              </label>
+            </div>
+            <div v-else-if="!categoriesLoading && !categoriesError" class="text-muted small">
+              暂无品类，请稍后刷新或检查接口。
+            </div>
+          </div>
+        </div>
+      </template>
     </div>
     <div ref="mapWrapRef" class="emap-map-wrap">
       <div ref="mapElRef" class="emap-map" />
@@ -100,12 +134,9 @@
               </div>
             </div>
           </div>
-          <div v-if="forecastText" class="emap-side-block">
-            <div class="emap-side-subtitle">预测结果</div>
-            <div>{{ forecastText }}</div>
-          </div>
         </template>
         <div v-else class="text-muted">点击业务库房点位，将按当前比价类型与品类吨数自动比价，并绘制指向冶炼厂的箭头。</div>
+        <div v-if="forecastError" class="emap-side-error">{{ forecastError }}</div>
         <div v-if="compareError" class="emap-side-error">{{ compareError }}</div>
       </div>
       <div class="emap-legend">
@@ -118,6 +149,34 @@
       </div>
     </div>
     <div v-if="loadError" class="alert alert-warning m-3 mb-0" role="alert">{{ loadError }}</div>
+
+    <!-- 与「送货量预测」页一致的趋势弹窗：折线图 + 仓库 / 大区经理 / 品类 / 冶炼厂 -->
+    <div v-if="forecastModalVisible" class="emap-fc-modal" @click.self="closeForecastModal">
+      <div class="emap-fc-modal-content emap-fc-modal-chart">
+        <div class="emap-fc-modal-header">
+          <h3>{{ forecastModalTitle }}</h3>
+          <button type="button" class="emap-fc-close-btn" @click="closeForecastModal">&times;</button>
+        </div>
+        <div class="emap-fc-modal-body">
+          <div class="emap-fc-chart-wrap">
+            <canvas v-if="forecastModalDates.length" ref="forecastTrendCanvasRef"></canvas>
+            <p v-else class="emap-fc-chart-empty text-muted mb-0">当前库房暂无可用预测明细。</p>
+          </div>
+          <div class="emap-fc-chart-meta">
+            <p><strong>仓库：</strong>{{ forecastModalMeta?.warehouse }}</p>
+            <p><strong>大区经理：</strong>{{ forecastModalMeta?.regional_manager }}</p>
+            <p><strong>品类：</strong>{{ forecastModalMeta?.product_variety }}</p>
+            <p v-if="forecastModalMeta?.smelter"><strong>冶炼厂：</strong>{{ forecastModalMeta.smelter }}</p>
+          </div>
+          <div class="emap-fc-chart-actions">
+            <button type="button" class="btn btn-sm btn-secondary" @click="exportForecastTrendCsv">导出趋势CSV</button>
+          </div>
+        </div>
+        <div class="emap-fc-modal-footer">
+          <button type="button" class="btn btn-secondary" @click="closeForecastModal">关闭</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -128,8 +187,9 @@ import 'leaflet/dist/leaflet.css'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
 import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
+import axios from 'axios'
+import { ApiPaths } from '../api/paths'
 import {
-  fetchForecastDetail,
   fetchTlCategories,
   fetchTlSmeltersAll,
   fetchTlWarehouseTypes,
@@ -160,11 +220,39 @@ type ComparisonRankItem = {
   qtySum: number
 }
 
+/** 与「送货量预测」折线图弹窗下方展示一致 */
+type ForecastChartMeta = {
+  warehouse: string
+  regional_manager: string
+  product_variety: string
+  smelter?: string
+}
+
 const GAODE_TILE =
   'https://webrd01.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}'
 
 const DEFAULT_WAREHOUSE_COLOR = '#2563eb'
 const MAX_MAP_FLOW_TARGETS = 30
+const EMAP_TOOLBAR_COLLAPSED_KEY = 'emap.toolbar.collapsed'
+
+function readToolbarCollapsed(): boolean {
+  try {
+    return sessionStorage.getItem(EMAP_TOOLBAR_COLLAPSED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+const toolbarCollapsed = ref(readToolbarCollapsed())
+
+function toggleToolbarCollapse() {
+  toolbarCollapsed.value = !toolbarCollapsed.value
+  try {
+    sessionStorage.setItem(EMAP_TOOLBAR_COLLAPSED_KEY, toolbarCollapsed.value ? '1' : '0')
+  } catch {
+    /* 隐私模式等 */
+  }
+}
 
 const mapWrapRef = ref<HTMLElement | null>(null)
 const mapElRef = ref<HTMLElement | null>(null)
@@ -193,10 +281,21 @@ watch(
   },
   { deep: true, immediate: true },
 )
+
+watch(toolbarCollapsed, async () => {
+  await nextTick()
+  mapRef.value?.invalidateSize()
+})
 const compareLoading = ref(false)
 const forecastLoading = ref(false)
 const compareError = ref('')
-const forecastText = ref('')
+const forecastError = ref('')
+const forecastModalVisible = ref(false)
+const forecastModalTitle = ref('')
+const forecastModalMeta = ref<ForecastChartMeta | null>(null)
+const forecastModalDates = ref<string[]>([])
+const forecastModalValues = ref<number[]>([])
+const forecastTrendCanvasRef = ref<HTMLCanvasElement | null>(null)
 const selectedWarehouse = ref<MapPoint | null>(null)
 const comparisonType = ref<'base' | 'tax3'>('base')
 /** 与品类 id 对应：默认全选、吨数默认 1（与智能比价一致可改） */
@@ -207,6 +306,7 @@ const allWarehousePoints = ref<MapPoint[]>([])
 const allSmelterPoints = ref<MapPoint[]>([])
 
 let resizeObs: ResizeObserver | null = null
+let forecastTrendResizeHandler: (() => void) | null = null
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl })
@@ -414,7 +514,8 @@ function renderMarkers(points: MapPoint[]) {
     if (p.kind === 'warehouse') {
       marker.on('click', () => {
         selectedWarehouse.value = p
-        forecastText.value = ''
+        forecastError.value = ''
+        closeForecastModal()
         void runComparisonForWarehouse(p)
       })
     }
@@ -709,34 +810,247 @@ async function runComparisonForWarehouse(warehouse: MapPoint) {
   }
 }
 
+function uniqSortedJoinZh(values: string[]): string {
+  const u = [...new Set(values.map((s) => s.trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'zh-CN'),
+  )
+  return u.length ? u.join('、') : '—'
+}
+
+function uniqSortedJoinZhOptional(values: string[]): string | undefined {
+  const u = [...new Set(values.map((s) => s.trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, 'zh-CN'),
+  )
+  return u.length ? u.join('、') : undefined
+}
+
+function parseForecastDetailError(e: unknown): string {
+  const err = e as { response?: { data?: { message?: string; detail?: string } }; message?: string }
+  const data = err.response?.data
+  return (
+    (typeof data?.message === 'string' && data.message) ||
+    (typeof data?.detail === 'string' && data.detail) ||
+    (typeof err.message === 'string' && err.message) ||
+    '获取预测明细失败'
+  )
+}
+
+/** 与 PurchaseQuantity.fetchDetailData 相同的分页请求方式 */
+async function fetchForecastDetailPaged(warehouses: string[]): Promise<Record<string, unknown>[]> {
+  const page_size = 500
+  const all: Record<string, unknown>[] = []
+  let page = 1
+  while (page <= 50) {
+    const response = await axios.get(ApiPaths.forecastDetail, {
+      params: { warehouses, page, page_size },
+    })
+    const data = response.data as { items?: Record<string, unknown>[]; total?: number }
+    const items = data.items ?? []
+    all.push(...items)
+    if (items.length === 0) break
+    if (items.length < page_size) break
+    if (typeof data.total === 'number' && all.length >= data.total) break
+    page++
+  }
+  return all
+}
+
+function closeForecastModal() {
+  forecastModalVisible.value = false
+  forecastModalMeta.value = null
+  forecastModalDates.value = []
+  forecastModalValues.value = []
+  forecastModalTitle.value = ''
+}
+
+function drawForecastTrendChart() {
+  const canvas = forecastTrendCanvasRef.value
+  if (!canvas) return
+  const dates = forecastModalDates.value
+  const values = forecastModalValues.value
+  if (dates.length === 0) return
+
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+
+  const wrap = canvas.parentElement
+  const width = Math.max((wrap?.clientWidth ?? 560) - 8, 320)
+  const height = 300
+  canvas.width = width
+  canvas.height = height
+
+  const margin = { t: 20, r: 16, b: 44, l: 52 }
+  const W = width - margin.l - margin.r
+  const H = height - margin.t - margin.b
+  const n = dates.length
+
+  const maxV = Math.max(...values, 0)
+  const maxY = maxV <= 0 ? 1 : maxV * 1.08
+
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, width, height)
+
+  ctx.strokeStyle = '#d1d5db'
+  ctx.lineWidth = 1
+  ctx.beginPath()
+  ctx.moveTo(margin.l, margin.t)
+  ctx.lineTo(margin.l, margin.t + H)
+  ctx.lineTo(margin.l + W, margin.t + H)
+  ctx.stroke()
+
+  const ySteps = 5
+  ctx.font = '11px system-ui, sans-serif'
+  ctx.fillStyle = '#64748b'
+  for (let i = 0; i <= ySteps; i++) {
+    const y = margin.t + H - (i / ySteps) * H
+    const val = (i / ySteps) * maxY
+    ctx.strokeStyle = '#f1f5f9'
+    ctx.beginPath()
+    ctx.moveTo(margin.l, y)
+    ctx.lineTo(margin.l + W, y)
+    ctx.stroke()
+    ctx.fillText(val.toFixed(2), 4, y + 4)
+  }
+
+  const xStep = n <= 1 ? W / 2 : W / (n - 1)
+
+  ctx.strokeStyle = '#1476db'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  values.forEach((v, i) => {
+    const x = margin.l + i * xStep
+    const y = margin.t + H - (v / maxY) * H
+    if (i === 0) ctx.moveTo(x, y)
+    else ctx.lineTo(x, y)
+  })
+  ctx.stroke()
+
+  ctx.fillStyle = '#1476db'
+  values.forEach((v, i) => {
+    const x = margin.l + i * xStep
+    const y = margin.t + H - (v / maxY) * H
+    ctx.beginPath()
+    ctx.arc(x, y, 4, 0, Math.PI * 2)
+    ctx.fill()
+  })
+
+  const maxLabs = Math.max(2, Math.floor(W / 56))
+  const labStep = Math.max(1, Math.ceil(n / maxLabs))
+  ctx.fillStyle = '#64748b'
+  dates.forEach((d, i) => {
+    if (i % labStep !== 0 && i !== n - 1) return
+    const x = margin.l + i * xStep
+    const label = d.length >= 10 ? d.slice(5) : d
+    ctx.fillText(label, x - 16, margin.t + H + 28)
+  })
+
+  ctx.save()
+  ctx.translate(14, margin.t + H / 2)
+  ctx.rotate(-Math.PI / 2)
+  ctx.fillStyle = '#475569'
+  ctx.font = '12px system-ui, sans-serif'
+  ctx.fillText('预测重量(吨)', -36, 0)
+  ctx.restore()
+
+  ctx.fillStyle = '#475569'
+  ctx.font = '12px system-ui, sans-serif'
+  ctx.fillText('预测日期', margin.l + W / 2 - 28, height - 8)
+}
+
+function escapeForecastCsvCell(s: string): string {
+  if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function exportForecastTrendCsv() {
+  const dates = forecastModalDates.value
+  const values = forecastModalValues.value
+  if (dates.length === 0) {
+    window.alert('没有可导出的数据')
+    return
+  }
+  const m = forecastModalMeta.value
+  const metaLines = m
+    ? [
+        ['字段', '值'].join(','),
+        ['仓库', m.warehouse].map(escapeForecastCsvCell).join(','),
+        ['大区经理', m.regional_manager].map(escapeForecastCsvCell).join(','),
+        ...(m.smelter ? [['冶炼厂', m.smelter].map(escapeForecastCsvCell).join(',')] : []),
+        ['品类', m.product_variety].map(escapeForecastCsvCell).join(','),
+      ]
+    : []
+  const headers = ['预测日期', '预测重量(吨)']
+  const rowsData = dates.map((d, i) => [d, values[i]?.toFixed(2) ?? '0.00'].map(escapeForecastCsvCell))
+  const csvContent = [...metaLines, '', headers.join(','), ...rowsData.map((r) => r.join(','))].join('\n')
+  const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
+  const link = document.createElement('a')
+  const timestamp = new Date().toISOString().replace(/[-:]/g, '').slice(0, 15)
+  link.href = URL.createObjectURL(blob)
+  link.download = `预测趋势_${timestamp}.csv`
+  link.click()
+  URL.revokeObjectURL(link.href)
+}
+
+watch(forecastModalVisible, (v) => {
+  if (v) {
+    nextTick(() => {
+      drawForecastTrendChart()
+      forecastTrendResizeHandler = () => drawForecastTrendChart()
+      window.addEventListener('resize', forecastTrendResizeHandler)
+    })
+  } else if (forecastTrendResizeHandler) {
+    window.removeEventListener('resize', forecastTrendResizeHandler)
+    forecastTrendResizeHandler = null
+  }
+})
+
+watch([forecastModalDates, forecastModalValues], () => {
+  if (forecastModalVisible.value && forecastModalDates.value.length > 0) {
+    nextTick(() => drawForecastTrendChart())
+  }
+})
+
 async function runForecastForWarehouse(warehouse: MapPoint) {
   forecastLoading.value = true
-  forecastText.value = ''
+  forecastError.value = ''
   try {
-    const rows = await fetchForecastDetail({
-      warehouses: [warehouse.title],
-      page: 1,
-      page_size: 200,
+    const whTitle = warehouse.title.trim()
+    const rawItems = await fetchForecastDetailPaged([whTitle])
+    const itemsFiltered = rawItems.filter((row) => {
+      const w = pickStr(row, ['warehouse', '仓库', 'warehouse_name', '仓库名'])
+      if (!w) return true
+      return w === whTitle || w.includes(whTitle) || whTitle.includes(w)
     })
-    if (!rows.length) {
-      forecastText.value = '当前库房暂无可用预测明细。'
-      return
-    }
+    const working = itemsFiltered.length ? itemsFiltered : rawItems
+
     const byDate = new Map<string, number>()
-    for (const row of rows) {
-      const d = pickStr(row, ['target_date', '预测日期', 'date']) || '未知日期'
+    for (const row of working) {
+      const d = pickStr(row, ['target_date', '预测日期', 'date'])
+      if (!d) continue
       const w = pickNumber(row, ['predicted_weight', '预测重量', 'weight']) ?? 0
       byDate.set(d, (byDate.get(d) || 0) + w)
     }
     const sorted = [...byDate.entries()].sort((a, b) => a[0].localeCompare(b[0], 'zh-CN'))
-    const total = sorted.reduce((sum, [, weight]) => sum + weight, 0)
-    const preview = sorted
-      .slice(0, 3)
-      .map(([d, w]) => `${d}: ${formatNum(w)}吨`)
-      .join('；')
-    forecastText.value = `合计预测 ${formatNum(total)} 吨（${sorted.length} 天）。${preview}`
-  } catch (err) {
-    forecastText.value = err instanceof Error ? err.message : String(err)
+    const dates = sorted.map(([d]) => d)
+    const vals = sorted.map(([, weight]) => weight)
+
+    const rms = working.map((r) => pickStr(r, ['regional_manager', '大区经理', '经理']))
+    const vars = working.map((r) => pickStr(r, ['product_variety', '品类', '品种', '产品品种']))
+    const sms = working.map((r) => pickStr(r, ['smelter', '冶炼厂', 'smelter_name', '冶炼厂名']))
+
+    forecastModalMeta.value = {
+      warehouse: whTitle,
+      regional_manager: uniqSortedJoinZh(rms),
+      product_variety: uniqSortedJoinZh(vars),
+      smelter: uniqSortedJoinZhOptional(sms),
+    }
+    forecastModalTitle.value = `预测趋势：${whTitle}`
+    forecastModalDates.value = dates
+    forecastModalValues.value = vals
+    forecastModalVisible.value = true
+  } catch (e) {
+    closeForecastModal()
+    forecastError.value = parseForecastDetailError(e)
   } finally {
     forecastLoading.value = false
   }
@@ -824,6 +1138,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (forecastTrendResizeHandler) {
+    window.removeEventListener('resize', forecastTrendResizeHandler)
+    forecastTrendResizeHandler = null
+  }
   resizeObs?.disconnect()
   resizeObs = null
   mapRef.value?.remove()
@@ -847,6 +1165,39 @@ onBeforeUnmount(() => {
   margin: 12px 16px 0;
   padding: 12px 14px;
   border: none;
+}
+
+.emap-toolbar-collapsed {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.emap-title--compact {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.emap-toolbar-heading {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.emap-toolbar-collapse-btn {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.emap-toolbar-heading-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .emap-toolbar-row {
@@ -1037,6 +1388,111 @@ onBeforeUnmount(() => {
 .emap-side-error {
   margin-top: 8px;
   color: #b91c1c;
+}
+
+.emap-fc-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.emap-fc-modal-content {
+  background: #fff;
+  border-radius: 8px;
+  width: min(720px, 96vw);
+  max-width: 96%;
+  max-height: 90vh;
+  overflow: auto;
+  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.2);
+}
+
+.emap-fc-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #e5e9f2;
+}
+
+.emap-fc-modal-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2d3d;
+  margin: 0;
+}
+
+.emap-fc-close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  color: #909399;
+  padding: 0 4px;
+}
+
+.emap-fc-close-btn:hover {
+  color: #606266;
+}
+
+.emap-fc-modal-body {
+  padding: 20px;
+}
+
+.emap-fc-chart-wrap {
+  width: 100%;
+  min-height: 300px;
+  margin-bottom: 16px;
+}
+
+.emap-fc-chart-wrap canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.emap-fc-chart-empty {
+  padding: 48px 16px;
+  text-align: center;
+  font-size: 14px;
+}
+
+.emap-fc-chart-meta {
+  background: #f8fafc;
+  border-radius: 8px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.emap-fc-chart-meta p {
+  margin: 0;
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.5;
+}
+
+.emap-fc-chart-meta strong {
+  color: #0f172a;
+  margin-right: 6px;
+}
+
+.emap-fc-chart-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.emap-fc-modal-footer {
+  padding: 16px 20px;
+  border-top: 1px solid #e5e9f2;
+  text-align: right;
 }
 
 .emap-legend {

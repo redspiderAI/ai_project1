@@ -85,8 +85,21 @@ function assertTlBizCode200(raw: unknown, ctx: string): void {
 
 /**
  * 从 get_warehouses / get_smelters 等响应中取出本页行。
- * 分页时 `data` 多为 `{ list, total, page, size }`；不传 page 时 `data` 可能直接为数组。
+ * 分页时 `data` 常见 `{ list|items|records, total|count|totalCount }`；也可能直接为数组。
  */
+function pickTotalFromPayload(d: Record<string, unknown>): number | undefined {
+  const keys = ['total', 'count', 'totalCount', 'total_count', 'Total']
+  for (const k of keys) {
+    const v = d[k]
+    if (typeof v === 'number' && Number.isFinite(v)) return v
+    if (typeof v === 'string' && v.trim() !== '') {
+      const n = Number(v)
+      if (Number.isFinite(n)) return n
+    }
+  }
+  return undefined
+}
+
 function extractTlListPayload(raw: unknown): { rows: Record<string, unknown>[]; total?: number } {
   const data = unwrapData(raw)
   if (Array.isArray(data)) {
@@ -94,10 +107,13 @@ function extractTlListPayload(raw: unknown): { rows: Record<string, unknown>[]; 
       rows: data.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object'),
     }
   }
-  if (data != null && typeof data === 'object' && Array.isArray((data as { list?: unknown }).list)) {
-    const d = data as { list: unknown[]; total?: number }
-    const rows = (d.list || []).filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-    return { rows, total: typeof d.total === 'number' ? d.total : undefined }
+  if (data != null && typeof data === 'object' && !Array.isArray(data)) {
+    const d = data as Record<string, unknown>
+    const listRaw = d.list ?? d.items ?? d.records
+    if (Array.isArray(listRaw)) {
+      const rows = listRaw.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      return { rows, total: pickTotalFromPayload(d) }
+    }
   }
   return { rows: unwrapList(raw) }
 }
@@ -105,39 +121,55 @@ function extractTlListPayload(raw: unknown): { rows: Record<string, unknown>[]; 
 /** 库房/冶炼厂分页：每页条数（你方要求 200；若后端限制 size，可改为 100） */
 const TL_LIST_PAGE_SIZE = 200
 
+/**
+ * 拉齐列表全部分页后再返回（地图等场景一次性打点）。
+ * 从第 1 页起固定带 `page`、`size`，避免服务端默认 pageSize 小于本常量时只拉到第一页。
+ */
 async function fetchTlListAll(
   pathNoQuery: string,
   ctx: string,
 ): Promise<Record<string, unknown>[]> {
-  const raw0 = await tlGetJson(pathNoQuery)
+  const pageSize = TL_LIST_PAGE_SIZE
+  const sep = pathNoQuery.includes('?') ? '&' : '?'
+
+  const raw0 = await tlGetJson(`${pathNoQuery}${sep}page=1&size=${pageSize}`)
   assertTlBizCode200(raw0, ctx)
   const data0 = unwrapData(raw0)
   if (Array.isArray(data0)) {
     return data0.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
   }
 
-  const pageSize = TL_LIST_PAGE_SIZE
   const first = extractTlListPayload(raw0)
   const all: Record<string, unknown>[] = [...first.rows]
   let total = first.total
   let page = 2
 
-  if (first.rows.length < pageSize) {
+  if (first.rows.length === 0) {
     return all
   }
   if (total != null && all.length >= total) {
     return all
   }
+  if (first.rows.length < pageSize) {
+    return all
+  }
 
-  const sep = pathNoQuery.includes('?') ? '&' : '?'
   while (page <= 500) {
     const raw = await tlGetJson(`${pathNoQuery}${sep}page=${page}&size=${pageSize}`)
     assertTlBizCode200(raw, ctx)
+    const dataLoop = unwrapData(raw)
+    if (Array.isArray(dataLoop)) {
+      all.push(
+        ...dataLoop.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object'),
+      )
+      break
+    }
     const { rows, total: t2 } = extractTlListPayload(raw)
     if (t2 != null) total = t2
     all.push(...rows)
-    if (rows.length < pageSize) break
+    if (rows.length === 0) break
     if (total != null && all.length >= total) break
+    if (rows.length < pageSize) break
     page += 1
   }
 
