@@ -159,13 +159,10 @@
 
         <div class="pagination">
           <button @click="managerCurrentPage--" :disabled="managerCurrentPage === 1">上一页</button>
-          <span>第 {{ managerCurrentPage }} / {{ managerTotalPages }} 页</span>
+          <span
+            >第 {{ managerCurrentPage }} / {{ managerTotalPages }} 页（每页 {{ pivotGroupsPerPage }} 个大区经理，同经理下多冶炼厂同行展示）</span
+          >
           <button @click="managerCurrentPage++" :disabled="managerCurrentPage === managerTotalPages">下一页</button>
-          <select v-model="managerPageSize" @change="managerCurrentPage = 1">
-            <option :value="10">10条/页</option>
-            <option :value="20">20条/页</option>
-            <option :value="50">50条/页</option>
-          </select>
         </div>
       </div>
     </div>
@@ -349,13 +346,10 @@
 
         <div class="pagination">
           <button @click="warehouseCurrentPage--" :disabled="warehouseCurrentPage === 1">上一页</button>
-          <span>第 {{ warehouseCurrentPage }} / {{ warehouseTotalPages }} 页</span>
+          <span
+            >第 {{ warehouseCurrentPage }} / {{ warehouseTotalPages }} 页（每页 {{ pivotGroupsPerPage }} 个仓库，同仓库下多行合并展示）</span
+          >
           <button @click="warehouseCurrentPage++" :disabled="warehouseCurrentPage === warehouseTotalPages">下一页</button>
-          <select v-model="warehousePageSize" @change="warehouseCurrentPage = 1">
-            <option :value="10">10条/页</option>
-            <option :value="20">20条/页</option>
-            <option :value="50">50条/页</option>
-          </select>
         </div>
       </div>
     </div>
@@ -387,6 +381,15 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch, nextTick } from 'vue'
 import axios from 'axios'
 import { ApiPaths } from '../api/paths'
+import { DELIVERY_HISTORY_FETCH_PAGE_SIZE } from '../api/fetchLimits'
+import { fetchDeliveryHistoryDimensionOptions } from '../api/dimensionOptions'
+import {
+  PIVOT_GROUPS_PER_PAGE,
+  paginatePivotRowsByGroup,
+  pivotGroupTotalPages,
+} from '../utils/pivotTablePagination'
+
+const pivotGroupsPerPage = PIVOT_GROUPS_PER_PAGE
 
 // ==================== 类型定义 ====================
 interface RawRecord {
@@ -403,6 +406,41 @@ interface ApiResponse {
   total: number
   page: number
   page_size: number
+}
+
+async function refreshDeliveryHistoryDimensionFilters() {
+  try {
+    const dims = await fetchDeliveryHistoryDimensionOptions()
+    allManagerOptions.value = dims.regional_managers
+    allSmelterOptions.value = dims.smelters
+    allWarehouseOptions.value = dims.warehouses
+    filterManagerOptions()
+    filterSmelterOptions()
+    filterWarehouseOptions()
+    filterWarehouseManagerOptions()
+    filterWarehouseSmelterOptions()
+  } catch (e) {
+    console.error('获取送货历史维度选项失败', e)
+  }
+}
+
+async function fetchAllDeliveryHistoryItems(
+  baseParams: Record<string, unknown>,
+): Promise<RawRecord[]> {
+  const all: RawRecord[] = []
+  let page = 1
+  while (page <= 200) {
+    const params = { ...baseParams, page, page_size: DELIVERY_HISTORY_FETCH_PAGE_SIZE }
+    const response = await axios.get(ApiPaths.deliveryHistory, { params })
+    const data = response.data as ApiResponse
+    const items = data.items || []
+    all.push(...items)
+    if (items.length === 0) break
+    if (items.length < DELIVERY_HISTORY_FETCH_PAGE_SIZE) break
+    if (typeof data.total === 'number' && all.length >= data.total) break
+    page += 1
+  }
+  return all
 }
 
 // 表格行数据（按大区经理查询）
@@ -448,7 +486,6 @@ const closeErrorModal = () => {
 // ==================== 按大区经理查询 ====================
 const managerTotal = ref(0)
 const managerCurrentPage = ref(1)
-const managerPageSize = ref(10)
 const managerSelectedRows = ref<string[]>([])
 
 const managerFilters = ref({ startDate: '', endDate: '' })
@@ -462,6 +499,24 @@ const managerDateColumns = ref<string[]>([])
 
 // 表格行数据
 const managerTableRows = ref<ManagerTableRow[]>([])
+
+function managerGroupSort(a: ManagerTableRow, b: ManagerTableRow) {
+  const c = a.regional_manager.localeCompare(b.regional_manager, 'zh-CN')
+  if (c !== 0) return c
+  return a.smelter.localeCompare(b.smelter, 'zh-CN')
+}
+
+const managerTotalPages = computed(() =>
+  pivotGroupTotalPages(managerTableRows.value, (r) => r.regional_manager, managerGroupSort),
+)
+const managerPaginatedRows = computed(() =>
+  paginatePivotRowsByGroup(
+    managerTableRows.value,
+    managerCurrentPage.value,
+    (r) => r.regional_manager,
+    managerGroupSort,
+  ),
+)
 
 /** 分页后的行 + 大区经理列合并（与模板 showManager / managerRowspan 对应） */
 const managerDisplayRows = computed(() => {
@@ -498,12 +553,6 @@ const smelterDropdownVisible = ref(false)
 const smelterInputRef = ref<HTMLInputElement>()
 const allSmelterOptions = ref<string[]>([])
 const filteredSmelterOptions = ref<string[]>([])
-
-const managerTotalPages = computed(() => Math.max(1, Math.ceil(managerTableRows.value.length / managerPageSize.value)))
-const managerPaginatedRows = computed(() => {
-  const start = (managerCurrentPage.value - 1) * managerPageSize.value
-  return managerTableRows.value.slice(start, start + managerPageSize.value)
-})
 
 const isManagerAllSelected = computed(() => {
   return managerPaginatedRows.value.length > 0 && managerSelectedRows.value.length === managerPaginatedRows.value.length
@@ -625,35 +674,23 @@ const focusSmelterInput = () => {
 async function queryManagerData() {
   loading.value = true
   try {
-    const params: Record<string, any> = {
-      page: 1,
-      page_size: 500
-    }
-    
+    const baseParams: Record<string, unknown> = {}
+
     if (managerFilters.value.startDate) {
-      params.date_from = managerFilters.value.startDate
+      baseParams.date_from = managerFilters.value.startDate
     }
     if (managerFilters.value.endDate) {
-      params.date_to = managerFilters.value.endDate
+      baseParams.date_to = managerFilters.value.endDate
     }
     if (managerSelectedManagers.value.length > 0) {
-      params.regional_managers = managerSelectedManagers.value
+      baseParams.regional_managers = managerSelectedManagers.value
     }
     if (managerSelectedSmelters.value.length > 0) {
-      params.smelters = managerSelectedSmelters.value
+      baseParams.smelters = managerSelectedSmelters.value
     }
-    console.log('请求参数:', params)
-    
-    const response = await axios.get(ApiPaths.deliveryHistory, { params })
-    const data = response.data as ApiResponse
-    const items = data.items || []
-    
-    // 更新下拉选项
-    allManagerOptions.value = [...new Set(items.map((item: RawRecord) => item.regional_manager).filter(Boolean))]
-    allSmelterOptions.value = [...new Set(items.map((item: RawRecord) => item.smelter || '').filter(Boolean))]
-    filterManagerOptions()
-    filterSmelterOptions()
-    
+
+    const items = await fetchAllDeliveryHistoryItems(baseParams)
+
     // 获取所有日期
     const dates = [...new Set(items.map(item => item.delivery_date))].sort()
     managerDateColumns.value = dates
@@ -744,6 +781,7 @@ async function handleManagerBatchDelete() {
     await axios.delete(ApiPaths.deliveryHistoryBatchDelete, { data: { ids } })
     window.alert(`已成功删除 ${ids.length} 条送货历史记录`)
     managerSelectedRows.value = []
+    await refreshDeliveryHistoryDimensionFilters()
     queryManagerData()
   } catch (error: any) {
     console.error('删除失败', error)
@@ -761,7 +799,6 @@ async function handleManagerBatchDelete() {
 // ==================== 按仓库查询 ====================
 const warehouseTotal = ref(0)
 const warehouseCurrentPage = ref(1)
-const warehousePageSize = ref(10)
 const warehouseSelectedRows = ref<string[]>([])
 
 const warehouseFilters = ref({ startDate: '', endDate: '' })
@@ -775,13 +812,25 @@ const warehouseDateColumns = ref<string[]>([])
 // 表格行数据
 const warehouseTableRows = ref<WarehouseTableRow[]>([])
 
+function warehouseGroupSort(a: WarehouseTableRow, b: WarehouseTableRow) {
+  const c = a.warehouse.localeCompare(b.warehouse, 'zh-CN')
+  if (c !== 0) return c
+  const d = a.regional_manager.localeCompare(b.regional_manager, 'zh-CN')
+  if (d !== 0) return d
+  return a.smelter.localeCompare(b.smelter, 'zh-CN')
+}
+
 const warehouseTotalPages = computed(() =>
-  Math.max(1, Math.ceil(warehouseTableRows.value.length / warehousePageSize.value))
+  pivotGroupTotalPages(warehouseTableRows.value, (r) => r.warehouse, warehouseGroupSort),
 )
-const warehousePaginatedRows = computed(() => {
-  const start = (warehouseCurrentPage.value - 1) * warehousePageSize.value
-  return warehouseTableRows.value.slice(start, start + warehousePageSize.value)
-})
+const warehousePaginatedRows = computed(() =>
+  paginatePivotRowsByGroup(
+    warehouseTableRows.value,
+    warehouseCurrentPage.value,
+    (r) => r.warehouse,
+    warehouseGroupSort,
+  ),
+)
 
 /** 分页后的行 + 仓库列合并（与模板 showWarehouse / warehouseRowspan 对应）；仅保留此一处定义 */
 const warehouseDisplayRows = computed(() => {
@@ -1019,40 +1068,26 @@ const focusWarehouseSmelterInput = () => {
 async function queryWarehouseData() {
   loading.value = true
   try {
-    const params: Record<string, any> = {
-      page: 1,
-      page_size: 500
-    }
-    
+    const baseParams: Record<string, unknown> = {}
+
     if (warehouseFilters.value.startDate) {
-      params.date_from = warehouseFilters.value.startDate
+      baseParams.date_from = warehouseFilters.value.startDate
     }
     if (warehouseFilters.value.endDate) {
-      params.date_to = warehouseFilters.value.endDate
+      baseParams.date_to = warehouseFilters.value.endDate
     }
     if (warehouseSelectedWarehouses.value.length > 0) {
-      params.warehouses = warehouseSelectedWarehouses.value
+      baseParams.warehouses = warehouseSelectedWarehouses.value
     }
     if (warehouseSelectedManagers.value.length > 0) {
-      params.regional_managers = warehouseSelectedManagers.value
+      baseParams.regional_managers = warehouseSelectedManagers.value
     }
     if (warehouseSelectedSmelters.value.length > 0) {
-      params.smelters = warehouseSelectedSmelters.value
+      baseParams.smelters = warehouseSelectedSmelters.value
     }
-    console.log('请求参数:', params)
-    
-    const response = await axios.get(ApiPaths.deliveryHistory, { params })
-    const data = response.data as ApiResponse
-    const items = data.items || []
-    
-    // 更新下拉选项
-    allWarehouseOptions.value = [...new Set(items.map((item: RawRecord) => item.warehouse).filter(Boolean))]
-    allManagerOptions.value = [...new Set(items.map((item: RawRecord) => item.regional_manager).filter(Boolean))]
-    allSmelterOptions.value = [...new Set(items.map((item: RawRecord) => item.smelter || '').filter(Boolean))]
-    filterWarehouseOptions()
-    filterWarehouseManagerOptions()
-    filterWarehouseSmelterOptions()
-    
+
+    const items = await fetchAllDeliveryHistoryItems(baseParams)
+
     // 获取所有日期
     const dates = [...new Set(items.map(item => item.delivery_date))].sort()
     warehouseDateColumns.value = dates
@@ -1146,6 +1181,7 @@ async function handleWarehouseBatchDelete() {
     await axios.delete(ApiPaths.deliveryHistoryBatchDelete, { data: { ids } })
     window.alert(`已成功删除 ${ids.length} 条送货历史记录`)
     warehouseSelectedRows.value = []
+    await refreshDeliveryHistoryDimensionFilters()
     queryWarehouseData()
   } catch (error: any) {
     console.error('删除失败', error)
@@ -1244,8 +1280,9 @@ watch(
   { deep: true }
 )
 
-onMounted(() => {
+onMounted(async () => {
   loadPersistedHistoryQuery()
+  await refreshDeliveryHistoryDimensionFilters()
   queryManagerData()
   queryWarehouseData()
 })

@@ -189,6 +189,7 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import axios from 'axios'
 import { ApiPaths } from '../api/paths'
+import { FORECAST_DETAILS_FETCH_PAGE_SIZE } from '../api/fetchLimits'
 import {
   fetchTlCategories,
   fetchTlSmeltersAll,
@@ -837,10 +838,10 @@ function parseForecastDetailError(e: unknown): string {
 
 /** 与 PurchaseQuantity.fetchDetailData 相同的分页请求方式 */
 async function fetchForecastDetailPaged(warehouses: string[]): Promise<Record<string, unknown>[]> {
-  const page_size = 500
+  const page_size = FORECAST_DETAILS_FETCH_PAGE_SIZE
   const all: Record<string, unknown>[] = []
   let page = 1
-  while (page <= 50) {
+  while (page <= 200) {
     const response = await axios.get(ApiPaths.forecastDetail, {
       params: { warehouses, page, page_size },
     })

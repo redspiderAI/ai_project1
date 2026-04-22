@@ -319,13 +319,8 @@
 
         <div class="pagination">
           <button @click="prevPage" :disabled="currentPage === 1">上一页</button>
-          <span>第 {{ currentPage }} / {{ totalPages }} 页</span>
+          <span>第 {{ currentPage }} / {{ totalPages }} 页（每页 {{ listPageSize }} 条）</span>
           <button @click="nextPage" :disabled="currentPage === totalPages">下一页</button>
-          <select v-model="pageSize" @change="currentPage = 1">
-            <option :value="10">10条/页</option>
-            <option :value="20">20条/页</option>
-            <option :value="50">50条/页</option>
-          </select>
         </div>
       </div>
     </div>
@@ -410,6 +405,8 @@ import { ref, computed, onMounted } from 'vue'
 import axios from 'axios'
 import * as XLSX from 'xlsx'
 import { ApiPaths } from '@/api/paths'
+import { DELIVERY_HISTORY_FETCH_PAGE_SIZE } from '@/api/fetchLimits'
+import { fetchDeliveryHistoryDimensionOptions } from '@/api/dimensionOptions'
 
 // ==================== 类型定义 ====================
 interface HistoryRecord {
@@ -462,8 +459,10 @@ const fileInput = ref<HTMLInputElement>()
 // 数据
 const allData = ref<HistoryRecord[]>([])
 const summaryData = ref<SummaryRow[]>([])
-const total = ref(0)
 const selectedRows = ref<string[]>([])
+
+/** 列表固定每页条数；接口分批拉取后本地分页 */
+const listPageSize = 10
 
 // 预览数据（与 POST …/delivery-history/import 一致：上传整份原文件，字段名 file）
 const previewData = ref<PreviewRow[]>([])
@@ -519,11 +518,13 @@ const varietyInputRef = ref<HTMLInputElement>()
 const allVarietyOptions = ref<string[]>([])
 const filteredVarietyOptions = ref<string[]>([])
 
-// 分页
+// 分页（仅前端；数据一次性拉齐后按汇总行切片）
 const currentPage = ref(1)
-const pageSize = ref(20)
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
-const paginatedData = computed(() => summaryData.value)
+const totalPages = computed(() => Math.max(1, Math.ceil(summaryData.value.length / listPageSize)))
+const paginatedData = computed(() => {
+  const start = (currentPage.value - 1) * listPageSize
+  return summaryData.value.slice(start, start + listPageSize)
+})
 
 const isAllSelected = computed(() => {
   return paginatedData.value.length > 0 && selectedRows.value.length === paginatedData.value.length
@@ -759,17 +760,22 @@ const aggregateData = (data: HistoryRecord[]): SummaryRow[] => {
 // ==================== 获取下拉选项 ====================
 const fetchOptions = async () => {
   try {
-    const response = await axios.get(ApiPaths.deliveryHistory, {
-      params: { page: 1, page_size: 200 }
-    })
-    const data = response.data as ApiResponse
-    const items = data.items || []
-    
-    allManagerOptions.value = [...new Set(items.map((item: HistoryRecord) => item.regional_manager))].filter(Boolean)
-    allSmelterOptions.value = [...new Set(items.map((item: HistoryRecord) => item.smelter || '').filter(Boolean))]
-    allWarehouseOptions.value = [...new Set(items.map((item: HistoryRecord) => item.warehouse))].filter(Boolean)
-    allVarietyOptions.value = [...new Set(items.map((item: HistoryRecord) => item.product_variety))].filter(Boolean)
-    
+    const dims = await fetchDeliveryHistoryDimensionOptions()
+    allManagerOptions.value = dims.regional_managers
+    allSmelterOptions.value = dims.smelters
+    allWarehouseOptions.value = dims.warehouses
+
+    if (dims.product_varieties.length > 0) {
+      allVarietyOptions.value = dims.product_varieties
+    } else {
+      const response = await axios.get(ApiPaths.deliveryHistory, {
+        params: { page: 1, page_size: DELIVERY_HISTORY_FETCH_PAGE_SIZE },
+      })
+      const data = response.data as ApiResponse
+      const items = data.items || []
+      allVarietyOptions.value = [...new Set(items.map((item: HistoryRecord) => item.product_variety))].filter(Boolean)
+    }
+
     filteredManagerOptions.value = [...allManagerOptions.value]
     filteredSmelterOptions.value = [...allSmelterOptions.value]
     filteredWarehouseOptions.value = [...allWarehouseOptions.value]
@@ -783,45 +789,55 @@ const fetchOptions = async () => {
 const fetchData = async () => {
   tableLoading.value = true
   try {
-    const params: Record<string, any> = {
-      page: currentPage.value,
-      page_size: pageSize.value
-    }
-    
+    const baseParams: Record<string, any> = {}
+
     if (filters.value.startDate) {
-      params.date_from = filters.value.startDate
+      baseParams.date_from = filters.value.startDate
     }
     if (filters.value.endDate) {
-      params.date_to = filters.value.endDate
+      baseParams.date_to = filters.value.endDate
     }
-    
+
     if (selectedManagers.value.length > 0) {
-      params.regional_managers = selectedManagers.value
+      baseParams.regional_managers = selectedManagers.value
     }
     if (selectedSmelters.value.length > 0) {
-      params.smelters = selectedSmelters.value
+      baseParams.smelters = selectedSmelters.value
     }
     if (selectedWarehouses.value.length > 0) {
-      params.warehouses = selectedWarehouses.value
+      baseParams.warehouses = selectedWarehouses.value
     }
     if (selectedVarieties.value.length > 0) {
-      params.product_varieties = selectedVarieties.value
+      baseParams.product_varieties = selectedVarieties.value
     }
-    
-    const response = await axios.get(ApiPaths.deliveryHistory, { params })
-    const data = response.data as ApiResponse
-    
-    if (data && data.items) {
-      allData.value = data.items
-      const aggregated = aggregateData(data.items)
-      summaryData.value = aggregated
-      total.value = aggregated.length
+
+    const allItems: HistoryRecord[] = []
+    let page = 1
+    while (page <= 200) {
+      const params = {
+        ...baseParams,
+        page,
+        page_size: DELIVERY_HISTORY_FETCH_PAGE_SIZE,
+      }
+      const response = await axios.get(ApiPaths.deliveryHistory, { params })
+      const data = response.data as ApiResponse
+      const items = data.items || []
+      allItems.push(...items)
+      if (items.length === 0) break
+      if (items.length < DELIVERY_HISTORY_FETCH_PAGE_SIZE) break
+      if (typeof data.total === 'number' && allItems.length >= data.total) break
+      page += 1
+    }
+
+    allData.value = allItems
+    if (allItems.length > 0) {
+      summaryData.value = aggregateData(allItems)
     } else {
-      allData.value = []
       summaryData.value = []
-      total.value = 0
     }
-    
+
+    const tp = Math.max(1, Math.ceil(summaryData.value.length / listPageSize))
+    if (currentPage.value > tp) currentPage.value = tp
   } catch (error) {
     console.error('获取数据失败', error)
     showError('获取数据失败', ['请检查网络连接或稍后重试'])
@@ -854,17 +870,11 @@ const handleReset = () => {
 
 // ==================== 分页 ====================
 const prevPage = () => {
-  if (currentPage.value > 1) {
-    currentPage.value--
-    fetchData()
-  }
+  if (currentPage.value > 1) currentPage.value--
 }
 
 const nextPage = () => {
-  if (currentPage.value < totalPages.value) {
-    currentPage.value++
-    fetchData()
-  }
+  if (currentPage.value < totalPages.value) currentPage.value++
 }
 
 // ==================== 全选/批量删除 ====================
