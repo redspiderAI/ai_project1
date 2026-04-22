@@ -21,6 +21,200 @@
       color: #fff !important;
     }
 
+    /* 企业正式风：首页以“智能比价”为主业务 */
+    .home-page .home-content {
+      max-width: 1280px !important;
+    }
+    .home-page .modules-grid {
+      display: grid !important;
+      grid-template-columns: repeat(12, minmax(0, 1fr)) !important;
+      gap: 14px !important;
+      align-items: stretch !important;
+    }
+    .home-page .home-panel {
+      margin: 0 !important;
+      min-height: 100% !important;
+      border: 1px solid #d8e1ee !important;
+      border-radius: 12px !important;
+      background: #fff !important;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.05) !important;
+    }
+    .home-page .home-panel-title {
+      font-size: 16px !important;
+      font-weight: 700 !important;
+      padding-bottom: 12px !important;
+      margin-bottom: 12px !important;
+      border-bottom: 1px solid #e8eef7 !important;
+    }
+
+    /* 默认顺序：1 后台配置，2 ai比价，3 比价与决策 */
+    /* 主业务优先：把“比价与决策”提升到首屏核心位 */
+    .home-page .home-panel:nth-child(3) {
+      order: 1 !important;
+      grid-column: 1 / 8 !important;
+    }
+    .home-page .home-panel:nth-child(2) {
+      order: 2 !important;
+      grid-column: 8 / -1 !important;
+    }
+    .home-page .home-panel:nth-child(1) {
+      order: 3 !important;
+      grid-column: 1 / -1 !important;
+    }
+
+    .home-page .module-cards {
+      display: grid !important;
+      gap: 10px !important;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)) !important;
+    }
+    .home-page .module-card {
+      min-height: 76px !important;
+      padding: 12px 14px !important;
+      border-radius: 10px !important;
+      border-color: #dde5f1 !important;
+      transition: all 0.2s ease !important;
+    }
+    .home-page .module-info h4 {
+      margin-bottom: 2px !important;
+    }
+    .home-page .module-info p {
+      line-height: 1.35 !important;
+    }
+
+    /* 主业务卡片放大强调（智能比价） */
+    .home-page .home-panel:nth-child(3) .module-cards {
+      grid-template-columns: 1fr !important;
+    }
+    .home-page .home-panel:nth-child(3) .module-card {
+      min-height: 112px !important;
+      padding: 18px 18px !important;
+      border-color: #cddcf4 !important;
+      box-shadow: 0 4px 12px rgba(22, 119, 217, 0.1) !important;
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%) !important;
+    }
+    .home-page .home-panel:nth-child(3) .module-icon {
+      width: 46px !important;
+      height: 46px !important;
+    }
+    .home-page .home-panel:nth-child(3) .module-info h4 {
+      font-size: 17px !important;
+      font-weight: 700 !important;
+    }
+    .home-page .home-panel:nth-child(3) .module-info p {
+      font-size: 13px !important;
+      color: #475467 !important;
+    }
+
+    /* 次级业务（ai比价）使用单列，减少视觉竞争 */
+    .home-page .home-panel:nth-child(2) .module-cards {
+      grid-template-columns: 1fr !important;
+    }
+
+    @media (max-width: 1024px) {
+      .home-page .home-panel:nth-child(1),
+      .home-page .home-panel:nth-child(2),
+      .home-page .home-panel:nth-child(3) {
+        grid-column: 1 / -1 !important;
+      }
+      .home-page .home-panel:nth-child(3) .module-card {
+        min-height: 96px !important;
+      }
+    }
+
+    /* 上传报价页视觉升级：企业正式风 */
+    .upload-page .page-header {
+      background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%) !important;
+      border: 1px solid #dbe6f5 !important;
+      border-radius: 12px !important;
+      padding: 14px 16px !important;
+      margin-bottom: 14px !important;
+    }
+    .upload-page .page-header h3 {
+      font-size: 24px !important;
+      font-weight: 700 !important;
+      letter-spacing: 0.2px !important;
+      margin-bottom: 4px !important;
+    }
+    .upload-page .page-header p {
+      color: #667085 !important;
+      font-size: 13px !important;
+    }
+    .upload-page .card {
+      border: 1px solid #d8e2ef !important;
+      border-radius: 12px !important;
+      overflow: hidden !important;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, 0.05) !important;
+    }
+    .upload-page .card-header {
+      background: #f9fbff !important;
+      border-bottom: 1px solid #e8eff8 !important;
+      padding: 12px 16px !important;
+    }
+    .upload-page .card-header h4 {
+      font-size: 16px !important;
+      font-weight: 700 !important;
+      color: #1d2939 !important;
+    }
+    .upload-page .card-body {
+      padding: 18px !important;
+      background: #ffffff !important;
+    }
+    .upload-page .upload-area {
+      border: 1.5px dashed #b9ccee !important;
+      border-radius: 14px !important;
+      background: linear-gradient(180deg, #fbfdff 0%, #f6f9ff 100%) !important;
+      min-height: 230px !important;
+      padding: 36px 22px !important;
+      display: flex !important;
+      flex-direction: column !important;
+      align-items: center !important;
+      justify-content: center !important;
+      gap: 10px !important;
+      transition: all 0.2s ease !important;
+    }
+    .upload-page .upload-area:hover {
+      border-color: #7ea6e8 !important;
+      background: linear-gradient(180deg, #f8fbff 0%, #edf4ff 100%) !important;
+      box-shadow: 0 6px 16px rgba(22, 119, 217, 0.1) !important;
+    }
+    .upload-page .upload-area i {
+      margin-bottom: 0 !important;
+      font-size: 44px !important;
+      color: #2f79dc !important;
+      opacity: 0.9 !important;
+    }
+    .upload-page .upload-area h4 {
+      margin: 0 !important;
+      font-size: 21px !important;
+      font-weight: 700 !important;
+      color: #1d2939 !important;
+    }
+    .upload-page .upload-area p {
+      margin: 0 0 6px !important;
+      font-size: 13px !important;
+      color: #667085 !important;
+    }
+    .upload-page .upload-area .btn,
+    .upload-page .upload-area button {
+      min-width: 132px !important;
+      height: 42px !important;
+      border-radius: 10px !important;
+      font-weight: 700 !important;
+      box-shadow: 0 4px 10px rgba(22, 119, 217, 0.22) !important;
+    }
+    .upload-page .upload-area .btn:hover,
+    .upload-page .upload-area button:hover {
+      transform: translateY(-1px) !important;
+      box-shadow: 0 7px 14px rgba(22, 119, 217, 0.28) !important;
+    }
+    .upload-page .upload-progress {
+      margin-top: 14px !important;
+      padding: 12px 14px !important;
+      border: 1px solid #e5ecf7 !important;
+      border-radius: 10px !important;
+      background: #fafcff !important;
+    }
+
   </style>
 </head>
 <body>

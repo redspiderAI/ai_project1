@@ -188,6 +188,10 @@
             <div class="emap-cmp-summary-value">{{ comparisonSummary.bestSmelter || '-' }}</div>
           </div>
           <div class="emap-cmp-summary-card">
+            <div class="emap-cmp-summary-label">单价</div>
+            <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.bestUnitPrice) }}</div>
+          </div>
+          <div class="emap-cmp-summary-card">
             <div class="emap-cmp-summary-label">总利润</div>
             <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.bestProfit) }}</div>
           </div>
@@ -202,6 +206,7 @@
               <tr>
                 <th>排名</th>
                 <th>冶炼厂名称</th>
+                <th>单价</th>
                 <th>总回收价</th>
                 <th>估算运费</th>
                 <th>利润</th>
@@ -209,11 +214,12 @@
             </thead>
             <tbody>
               <tr v-if="!comparisonRanks.length">
-                <td colspan="5" class="text-center text-muted py-3">暂无比价明细（接口已返回成功）</td>
+                <td colspan="6" class="text-center text-muted py-3">暂无比价明细（接口已返回成功）</td>
               </tr>
               <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
                 <td>{{ row.rank }}</td>
                 <td>{{ row.smelter }}</td>
+                <td>¥ {{ formatNum(row.unitPrice) }}</td>
                 <td>¥ {{ formatNum(row.totalRecovery) }}</td>
                 <td>¥ {{ formatNum(row.freightPerTon) }}</td>
                 <td class="text-success fw-semibold">¥ {{ formatNum(row.netProfit) }}</td>
@@ -297,6 +303,7 @@ type MapPoint = {
 type ComparisonRankItem = {
   rank: number
   smelter: string
+  unitPrice: number
   netProfit: number
   totalRecovery: number
   freightPerTon: number
@@ -406,7 +413,7 @@ const comparisonModalTitle = ref('比价结果')
 const comparisonPanelCollapsed = ref(false)
 const forecastTrendCanvasRef = ref<HTMLCanvasElement | null>(null)
 const enableCoordPick = ref(false)
-const enableAutoZoomOnPointClick = ref(true)
+const enableAutoZoomOnPointClick = ref(false)
 const lastClickedCoordText = ref('')
 const mapToolsCollapsed = ref(false)
 const selectedWarehouse = ref<MapPoint | null>(null)
@@ -565,7 +572,8 @@ function initMap() {
 
   const map = L.map(el, {
     zoomControl: true,
-    preferCanvas: true,
+    // 需要 SVG 才能让虚线 dashoffset 动画生效
+    preferCanvas: false,
   }).setView([32.12, 118.78], 5)
 
   L.tileLayer(GAODE_TILE, {
@@ -910,13 +918,38 @@ function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
     const netProfit =
       pickNumber(row, ['净收益', 'profit', '净利润', '收益', 'net_profit', '总利润', '利润']) ?? 0
     const totalRecovery =
-      pickNumber(row, ['回收额', 'totalRecovery', 'materialSum', '物料总价', 'total_recovery']) ?? 0
+      pickNumber(row, [
+        '总回收价',
+        '回收额',
+        'totalRecovery',
+        'materialSum',
+        '物料总价',
+        'total_recovery',
+      ]) ?? 0
     const freightPerTon =
-      pickNumber(row, ['运费单价', 'freightPerTon', 'freight_per_ton', '运费每吨']) ?? 0
+      pickNumber(row, [
+        '估算运费',
+        '运费',
+        '运费单价',
+        'freightPerTon',
+        'freight_per_ton',
+        '运费每吨',
+      ]) ?? 0
     const qtySum = pickNumber(row, ['吨数', 'quantity', 'qtySum', 'qty', '需求吨数']) ?? 0
+    const unitPriceRaw = pickNumber(row, [
+      '单价',
+      '回收单价',
+      'unit_price',
+      '最优价',
+      'price',
+      '基准价',
+      '3%含税价',
+    ])
+    const unitPrice = unitPriceRaw != null ? unitPriceRaw : qtySum > 0 ? totalRecovery / qtySum : 0
     out.push({
       rank,
       smelter,
+      unitPrice: toDisplayNum(unitPrice),
       netProfit: toDisplayNum(netProfit),
       totalRecovery: toDisplayNum(totalRecovery),
       freightPerTon: toDisplayNum(freightPerTon),
@@ -980,9 +1013,20 @@ function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem
     const freightPerTon =
       pickNumber(row, ['估算运费', '运费单价', '运费/吨', 'freight_per_ton', 'freight']) ?? 0
     const qtySum = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数']) ?? 0
+    const unitPriceRaw = pickNumber(row, [
+      '单价',
+      '回收单价',
+      'unit_price',
+      '最优价',
+      'price',
+      '基准价',
+      '3%含税价',
+    ])
+    const unitPrice = unitPriceRaw != null ? unitPriceRaw : qtySum > 0 ? totalRecovery / qtySum : 0
     out.push({
       rank,
       smelter,
+      unitPrice: toDisplayNum(unitPrice),
       netProfit: toDisplayNum(netProfit),
       totalRecovery: toDisplayNum(totalRecovery),
       freightPerTon: toDisplayNum(freightPerTon),
@@ -1042,8 +1086,10 @@ function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRan
     .map((g) => {
       const freightPerTon = g.freightCount > 0 ? g.freightSum / g.freightCount : 0
       const netProfit = g.materialSum - freightPerTon * g.qtySum
+      const unitPrice = g.qtySum > 0 ? g.materialSum / g.qtySum : 0
       return {
         smelter: g.smelter,
+        unitPrice: toDisplayNum(unitPrice),
         netProfit: toDisplayNum(netProfit),
         totalRecovery: toDisplayNum(g.materialSum),
         freightPerTon: toDisplayNum(freightPerTon),
@@ -1224,10 +1270,12 @@ const comparisonSummary = computed(() => {
   const sorted = [...comparisonRanks.value].sort((a, b) => a.rank - b.rank)
   const first = sorted[0]
   const second = sorted[1]
+  const bestUnitPrice = first?.unitPrice ?? 0
   const bestProfit = first?.netProfit ?? 0
   const marginToSecond = first && second ? bestProfit - second.netProfit : 0
   return {
     bestSmelter: first?.smelter ?? '',
+    bestUnitPrice: toDisplayNum(bestUnitPrice),
     bestProfit: toDisplayNum(bestProfit),
     marginToSecond: toDisplayNum(marginToSecond),
   }
@@ -1550,13 +1598,20 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: calc(100vh - 72px);
   min-height: 420px;
-  background: #f3f4f6;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(59, 130, 246, 0.14), transparent 28%),
+    radial-gradient(circle at 86% 12%, rgba(20, 184, 166, 0.12), transparent 26%),
+    linear-gradient(180deg, #f6f8fc 0%, #eef2f9 100%);
 }
 
 .emap-toolbar {
   margin: 12px 16px 0;
-  padding: 12px 14px;
-  border: none;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
 }
 
 .emap-toolbar-collapsed {
@@ -1623,8 +1678,9 @@ onBeforeUnmount(() => {
 .emap-field-label {
   font-size: 11px;
   font-weight: 600;
-  color: #374151;
+  color: #475569;
   margin: 0;
+  letter-spacing: 0.2px;
 }
 
 .emap-select {
@@ -1654,7 +1710,7 @@ onBeforeUnmount(() => {
   gap: 8px 12px;
   max-height: 120px;
   overflow-y: auto;
-  padding: 4px 2px;
+  padding: 6px 2px;
 }
 
 .emap-cat-toolbar-actions {
@@ -1668,12 +1724,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   margin: 0;
-  padding: 4px 8px;
-  border-radius: 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid #dbe7fb;
   font-size: 12px;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.emap-cat-pill:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.14);
+  transform: translateY(-1px);
 }
 
 .emap-cat-pill .form-check-input {
@@ -1712,11 +1775,12 @@ onBeforeUnmount(() => {
 }
 
 .emap-title {
-  font-weight: 600;
-  font-size: 15px;
+  font-weight: 700;
+  font-size: 16px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  color: #0f172a;
 }
 
 .emap-map-wrap {
@@ -1724,9 +1788,10 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   margin: 12px 16px 16px;
-  border-radius: 10px;
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14);
 }
 
 .emap-map {
@@ -1743,10 +1808,12 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 10px;
-  padding: 8px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 9px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
 }
 
 .emap-map-tools {
@@ -1756,10 +1823,12 @@ onBeforeUnmount(() => {
   transform: translateY(-50%);
   z-index: 1000;
   min-width: 190px;
-  background: rgba(255, 255, 255, 0.94);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
   padding: 8px 10px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
   font-size: 12px;
   overflow: visible;
 }
@@ -1773,8 +1842,8 @@ onBeforeUnmount(() => {
 }
 
 .emap-map-tools-title {
-  font-weight: 600;
-  color: #1f2937;
+  font-weight: 700;
+  color: #0f172a;
 }
 
 .emap-map-tools-tab {
@@ -1785,11 +1854,12 @@ onBeforeUnmount(() => {
   z-index: 1000;
   border: 1px solid #d1d5db;
   border-right: none;
-  background: rgba(255, 255, 255, 0.95);
-  color: #1f2937;
+  background: rgba(255, 255, 255, 0.88);
+  color: #0f172a;
   padding: 10px 10px;
   border-radius: 8px 0 0 8px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
   writing-mode: vertical-rl;
   text-orientation: mixed;
   font-size: 12px;
@@ -1867,9 +1937,11 @@ onBeforeUnmount(() => {
   z-index: 1000;
   width: min(560px, calc(100% - 24px));
   max-height: calc(100% - 24px);
-  background: rgba(255, 255, 255, 0.96);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
   padding: 10px 12px;
   overflow: auto;
 }
@@ -1938,9 +2010,9 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-summary-card {
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  border: 1px solid #dbe7fb;
+  border-radius: 10px;
   padding: 10px 12px;
 }
 
@@ -2126,14 +2198,16 @@ onBeforeUnmount(() => {
   right: 12px;
   bottom: 12px;
   z-index: 1000;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 10px;
   padding: 8px 12px;
   font-size: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
 }
 
 .emap-legend-item {
