@@ -188,6 +188,10 @@
             <div class="emap-cmp-summary-value">{{ comparisonSummary.bestSmelter || '-' }}</div>
           </div>
           <div class="emap-cmp-summary-card">
+            <div class="emap-cmp-summary-label">单价</div>
+            <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.bestUnitPrice) }}</div>
+          </div>
+          <div class="emap-cmp-summary-card">
             <div class="emap-cmp-summary-label">总利润</div>
             <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.bestProfit) }}</div>
           </div>
@@ -202,6 +206,7 @@
               <tr>
                 <th>排名</th>
                 <th>冶炼厂名称</th>
+                <th>单价</th>
                 <th>总回收价</th>
                 <th>估算运费</th>
                 <th>利润</th>
@@ -209,11 +214,12 @@
             </thead>
             <tbody>
               <tr v-if="!comparisonRanks.length">
-                <td colspan="5" class="text-center text-muted py-3">暂无比价明细（接口已返回成功）</td>
+                <td colspan="6" class="text-center text-muted py-3">暂无比价明细（接口已返回成功）</td>
               </tr>
               <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
                 <td>{{ row.rank }}</td>
                 <td>{{ row.smelter }}</td>
+                <td>¥ {{ formatNum(row.unitPrice) }}</td>
                 <td>¥ {{ formatNum(row.totalRecovery) }}</td>
                 <td>¥ {{ formatNum(row.freightPerTon) }}</td>
                 <td class="text-success fw-semibold">¥ {{ formatNum(row.netProfit) }}</td>
@@ -297,6 +303,7 @@ type MapPoint = {
 type ComparisonRankItem = {
   rank: number
   smelter: string
+  unitPrice: number
   netProfit: number
   totalRecovery: number
   freightPerTon: number
@@ -421,6 +428,7 @@ const allSmelterPoints = ref<MapPoint[]>([])
 
 let resizeObs: ResizeObserver | null = null
 let forecastTrendResizeHandler: (() => void) | null = null
+const flowAnimTimerIds: number[] = []
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl })
@@ -563,7 +571,8 @@ function initMap() {
 
   const map = L.map(el, {
     zoomControl: true,
-    preferCanvas: true,
+    // 需要 SVG 才能让虚线 dashoffset 动画生效
+    preferCanvas: false,
   }).setView([32.12, 118.78], 5)
 
   L.tileLayer(GAODE_TILE, {
@@ -686,12 +695,20 @@ function formatNum(n: number): string {
 }
 
 function clearComparisonOverlays() {
+  stopFlowAnimations()
   flowLayerRef.value?.clearLayers()
   topTipLayerRef.value?.clearLayers()
   comparisonRanks.value = []
   lastComparisonSortKey.value = ''
   compareError.value = ''
   comparisonModalVisible.value = false
+}
+
+function stopFlowAnimations() {
+  while (flowAnimTimerIds.length) {
+    const id = flowAnimTimerIds.pop()
+    if (id != null) window.clearInterval(id)
+  }
 }
 
 function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
@@ -790,13 +807,38 @@ function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
     const netProfit =
       pickNumber(row, ['净收益', 'profit', '净利润', '收益', 'net_profit', '总利润', '利润']) ?? 0
     const totalRecovery =
-      pickNumber(row, ['回收额', 'totalRecovery', 'materialSum', '物料总价', 'total_recovery']) ?? 0
+      pickNumber(row, [
+        '总回收价',
+        '回收额',
+        'totalRecovery',
+        'materialSum',
+        '物料总价',
+        'total_recovery',
+      ]) ?? 0
     const freightPerTon =
-      pickNumber(row, ['运费单价', 'freightPerTon', 'freight_per_ton', '运费每吨']) ?? 0
+      pickNumber(row, [
+        '估算运费',
+        '运费',
+        '运费单价',
+        'freightPerTon',
+        'freight_per_ton',
+        '运费每吨',
+      ]) ?? 0
     const qtySum = pickNumber(row, ['吨数', 'quantity', 'qtySum', 'qty', '需求吨数']) ?? 0
+    const unitPriceRaw = pickNumber(row, [
+      '单价',
+      '回收单价',
+      'unit_price',
+      '最优价',
+      'price',
+      '基准价',
+      '3%含税价',
+    ])
+    const unitPrice = unitPriceRaw != null ? unitPriceRaw : qtySum > 0 ? totalRecovery / qtySum : 0
     out.push({
       rank,
       smelter,
+      unitPrice: toDisplayNum(unitPrice),
       netProfit: toDisplayNum(netProfit),
       totalRecovery: toDisplayNum(totalRecovery),
       freightPerTon: toDisplayNum(freightPerTon),
@@ -860,9 +902,20 @@ function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem
     const freightPerTon =
       pickNumber(row, ['估算运费', '运费单价', '运费/吨', 'freight_per_ton', 'freight']) ?? 0
     const qtySum = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数']) ?? 0
+    const unitPriceRaw = pickNumber(row, [
+      '单价',
+      '回收单价',
+      'unit_price',
+      '最优价',
+      'price',
+      '基准价',
+      '3%含税价',
+    ])
+    const unitPrice = unitPriceRaw != null ? unitPriceRaw : qtySum > 0 ? totalRecovery / qtySum : 0
     out.push({
       rank,
       smelter,
+      unitPrice: toDisplayNum(unitPrice),
       netProfit: toDisplayNum(netProfit),
       totalRecovery: toDisplayNum(totalRecovery),
       freightPerTon: toDisplayNum(freightPerTon),
@@ -922,8 +975,10 @@ function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRan
     .map((g) => {
       const freightPerTon = g.freightCount > 0 ? g.freightSum / g.freightCount : 0
       const netProfit = g.materialSum - freightPerTon * g.qtySum
+      const unitPrice = g.qtySum > 0 ? g.materialSum / g.qtySum : 0
       return {
         smelter: g.smelter,
+        unitPrice: toDisplayNum(unitPrice),
         netProfit: toDisplayNum(netProfit),
         totalRecovery: toDisplayNum(g.materialSum),
         freightPerTon: toDisplayNum(freightPerTon),
@@ -944,6 +999,7 @@ function findSmelterPoint(name: string): MapPoint | null {
 }
 
 function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[]) {
+  stopFlowAnimations()
   const flowLayer = flowLayerRef.value
   const tipLayer = topTipLayerRef.value
   if (!flowLayer || !tipLayer) return
@@ -963,18 +1019,41 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
       ],
       {
         color,
-        weight: 3,
-        opacity: 0.88,
-        dashArray: '10 10',
+        weight: 5,
+        opacity: 0.95,
+        dashArray: '14 10',
         className: 'emap-flow-line',
       },
     ).addTo(flowLayer)
     const br = bearingDeg(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng)
-    const arrowPt = pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.82)
-    L.marker(arrowPt, {
+    const movingArrow = L.marker(
+      pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.08),
+      {
+        icon: L.divIcon({
+          className: 'emap-flow-arrow-wrap',
+          html: `<div class="emap-flow-arrow emap-flow-arrow--3d" style="color:${color};transform:rotate(${br - 90}deg)">➤</div>`,
+          iconSize: [24, 24],
+          iconAnchor: [12, 12],
+        }),
+        interactive: false,
+      },
+    ).addTo(flowLayer)
+
+    let frac = 0.08
+    const speed = 0.014 + (i % 3) * 0.002
+    const timer = window.setInterval(() => {
+      frac += speed
+      if (frac > 0.92) frac = 0.08
+      movingArrow.setLatLng(
+        pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, frac),
+      )
+    }, 60)
+    flowAnimTimerIds.push(timer)
+
+    L.marker(pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.82), {
       icon: L.divIcon({
         className: 'emap-flow-arrow-wrap',
-        html: `<div class="emap-flow-arrow" style="color:${color};transform:rotate(${br - 90}deg)">▶</div>`,
+        html: `<div class="emap-flow-arrow" style="color:${color};transform:rotate(${br - 90}deg);opacity:.55">▶</div>`,
         iconSize: [20, 20],
         iconAnchor: [10, 10],
       }),
@@ -1096,10 +1175,12 @@ const comparisonSummary = computed(() => {
   const sorted = [...comparisonRanks.value].sort((a, b) => a.rank - b.rank)
   const first = sorted[0]
   const second = sorted[1]
+  const bestUnitPrice = first?.unitPrice ?? 0
   const bestProfit = first?.netProfit ?? 0
   const marginToSecond = first && second ? bestProfit - second.netProfit : 0
   return {
     bestSmelter: first?.smelter ?? '',
+    bestUnitPrice: toDisplayNum(bestUnitPrice),
     bestProfit: toDisplayNum(bestProfit),
     marginToSecond: toDisplayNum(marginToSecond),
   }
@@ -1400,6 +1481,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  stopFlowAnimations()
   if (forecastTrendResizeHandler) {
     window.removeEventListener('resize', forecastTrendResizeHandler)
     forecastTrendResizeHandler = null
@@ -2080,8 +2162,8 @@ onBeforeUnmount(() => {
 }
 
 .emap-flow-line {
-  stroke-dasharray: 10 10;
-  animation: emap-flow 1s linear infinite;
+  stroke-dasharray: 14 10;
+  animation: emap-flow 0.85s linear infinite;
 }
 
 .emap-flow-arrow-wrap {
@@ -2101,6 +2183,17 @@ onBeforeUnmount(() => {
   text-shadow: 0 0 2px #fff, 0 0 2px #fff;
 }
 
+.emap-flow-arrow--3d {
+  font-size: 14px;
+  font-weight: 800;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.95),
+    0 3px 6px rgba(0, 0, 0, 0.45),
+    0 0 10px rgba(37, 99, 235, 0.35);
+  filter: saturate(1.15);
+  animation: emap-arrow-float 0.9s ease-in-out infinite;
+}
+
 .emap-rank-tip {
   background: rgba(15, 23, 42, 0.88);
   color: #fff;
@@ -2114,10 +2207,20 @@ onBeforeUnmount(() => {
 
 @keyframes emap-flow {
   0% {
-    stroke-dashoffset: 20;
+    stroke-dashoffset: 24;
   }
   100% {
     stroke-dashoffset: 0;
+  }
+}
+
+@keyframes emap-arrow-float {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  50% {
+    transform: translateY(-1px) scale(1.04);
   }
 }
 </style>
