@@ -301,6 +301,49 @@
       .quote-result-saved-collapse {
         opacity: 0.72;
       }
+      .ai-native-weight-hidden {
+        display: none !important;
+      }
     </style>
+    <script>
+      ;(() => {
+        // 最小稳定版：仅做“货物品种默认不全选”，其余完全交给原生页面逻辑
+        // 目标：不影响库房/比价类型下拉与原生提交校验
+        let initialized = false
+
+        function getRoot() {
+          return document.querySelector('.comparison-page,.comparison-form,.page-content,.container') || null
+        }
+
+        function getCategoryBox(root) {
+          return root ? root.querySelector('.category-selection') : null
+        }
+
+        function uncheckAllOnce() {
+          if (initialized) return
+          const root = getRoot()
+          if (!root) return
+          const box = getCategoryBox(root)
+          if (!box) return
+          const cbs = Array.from(box.querySelectorAll('input[type="checkbox"]'))
+          if (!cbs.length) return
+          cbs.forEach((cb) => {
+            if (!cb.checked || cb.disabled) return
+            cb.checked = false
+            cb.dispatchEvent(new Event('input', { bubbles: true }))
+            cb.dispatchEvent(new Event('change', { bubbles: true }))
+          })
+          initialized = true
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', uncheckAllOnce)
+        } else {
+          uncheckAllOnce()
+        }
+        setTimeout(uncheckAllOnce, 400)
+        setTimeout(uncheckAllOnce, 1200)
+      })()
+    </script>
 </body>
 </html>
