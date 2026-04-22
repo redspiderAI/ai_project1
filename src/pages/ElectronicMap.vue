@@ -411,7 +411,7 @@ const comparisonModalTitle = ref('比价结果')
 const comparisonPanelCollapsed = ref(false)
 const forecastTrendCanvasRef = ref<HTMLCanvasElement | null>(null)
 const enableCoordPick = ref(false)
-const enableAutoZoomOnPointClick = ref(true)
+const enableAutoZoomOnPointClick = ref(false)
 const lastClickedCoordText = ref('')
 const mapToolsCollapsed = ref(false)
 const selectedWarehouse = ref<MapPoint | null>(null)
@@ -1502,13 +1502,20 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: calc(100vh - 72px);
   min-height: 420px;
-  background: #f3f4f6;
+  background:
+    radial-gradient(circle at 12% 14%, rgba(59, 130, 246, 0.14), transparent 28%),
+    radial-gradient(circle at 86% 12%, rgba(20, 184, 166, 0.12), transparent 26%),
+    linear-gradient(180deg, #f6f8fc 0%, #eef2f9 100%);
 }
 
 .emap-toolbar {
   margin: 12px 16px 0;
-  padding: 12px 14px;
-  border: none;
+  padding: 14px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.76);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
 }
 
 .emap-toolbar-collapsed {
@@ -1575,8 +1582,9 @@ onBeforeUnmount(() => {
 .emap-field-label {
   font-size: 11px;
   font-weight: 600;
-  color: #374151;
+  color: #475569;
   margin: 0;
+  letter-spacing: 0.2px;
 }
 
 .emap-select {
@@ -1606,7 +1614,7 @@ onBeforeUnmount(() => {
   gap: 8px 12px;
   max-height: 120px;
   overflow-y: auto;
-  padding: 4px 2px;
+  padding: 6px 2px;
 }
 
 .emap-cat-toolbar-actions {
@@ -1620,12 +1628,19 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   margin: 0;
-  padding: 4px 8px;
-  border-radius: 8px;
-  background: #f9fafb;
-  border: 1px solid #e5e7eb;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  border: 1px solid #dbe7fb;
   font-size: 12px;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.emap-cat-pill:hover {
+  border-color: #93c5fd;
+  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.14);
+  transform: translateY(-1px);
 }
 
 .emap-cat-pill .form-check-input {
@@ -1664,11 +1679,12 @@ onBeforeUnmount(() => {
 }
 
 .emap-title {
-  font-weight: 600;
-  font-size: 15px;
+  font-weight: 700;
+  font-size: 16px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  color: #0f172a;
 }
 
 .emap-map-wrap {
@@ -1676,9 +1692,10 @@ onBeforeUnmount(() => {
   flex: 1;
   min-height: 0;
   margin: 12px 16px 16px;
-  border-radius: 10px;
+  border-radius: 14px;
   overflow: hidden;
-  box-shadow: 0 8px 28px rgba(15, 23, 42, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14);
 }
 
 .emap-map {
@@ -1695,10 +1712,12 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 10px;
-  padding: 8px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(10px);
+  border-radius: 12px;
+  padding: 9px;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
 }
 
 .emap-map-tools {
@@ -1708,10 +1727,12 @@ onBeforeUnmount(() => {
   transform: translateY(-50%);
   z-index: 1000;
   min-width: 190px;
-  background: rgba(255, 255, 255, 0.94);
-  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 12px;
   padding: 8px 10px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
   font-size: 12px;
   overflow: visible;
 }
@@ -1725,8 +1746,8 @@ onBeforeUnmount(() => {
 }
 
 .emap-map-tools-title {
-  font-weight: 600;
-  color: #1f2937;
+  font-weight: 700;
+  color: #0f172a;
 }
 
 .emap-map-tools-tab {
@@ -1737,11 +1758,12 @@ onBeforeUnmount(() => {
   z-index: 1000;
   border: 1px solid #d1d5db;
   border-right: none;
-  background: rgba(255, 255, 255, 0.95);
-  color: #1f2937;
+  background: rgba(255, 255, 255, 0.88);
+  color: #0f172a;
   padding: 10px 10px;
   border-radius: 8px 0 0 8px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
   writing-mode: vertical-rl;
   text-orientation: mixed;
   font-size: 12px;
@@ -1819,9 +1841,11 @@ onBeforeUnmount(() => {
   z-index: 1000;
   width: min(560px, calc(100% - 24px));
   max-height: calc(100% - 24px);
-  background: rgba(255, 255, 255, 0.96);
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(12px);
+  border-radius: 14px;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
   padding: 10px 12px;
   overflow: auto;
 }
@@ -1890,9 +1914,9 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-summary-card {
-  background: #f8fafc;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
+  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
+  border: 1px solid #dbe7fb;
+  border-radius: 10px;
   padding: 10px 12px;
 }
 
@@ -2078,14 +2102,16 @@ onBeforeUnmount(() => {
   right: 12px;
   bottom: 12px;
   z-index: 1000;
-  background: rgba(255, 255, 255, 0.92);
-  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 10px;
   padding: 8px 12px;
   font-size: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
 }
 
 .emap-legend-item {

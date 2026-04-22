@@ -9,6 +9,8 @@
       ;(() => {
         const taskToRecord = new Map()
         const recordToTask = new Map()
+        const bboxByRecord = new Map()
+        const bboxByTask = new Map()
         const rawFetch = window.fetch.bind(window)
         const asObj = (v) => (v && typeof v === 'object' && !Array.isArray(v) ? v : null)
         const pick = (o, keys, d = undefined) => {
@@ -58,6 +60,11 @@
                 taskToRecord.set(String(taskId), String(id))
                 recordToTask.set(String(id), String(taskId))
               }
+              const bbox = parseBBox(pick(row, ['bbox'], null))
+              if (bbox && bbox.length >= 4) {
+                bboxByRecord.set(String(id), bbox)
+                if (taskId) bboxByTask.set(String(taskId), bbox)
+              }
               const outcome =
                 asObj(row.outcome) ||
                 {
@@ -75,7 +82,7 @@
                   ['original_filename', 'originalFilename', 'file_name', 'filename'],
                   '',
                 ),
-                bbox: parseBBox(pick(row, ['bbox'], null)),
+                bbox,
                 status: String(pick(row, ['status'], 'COMPLETED')).toUpperCase(),
                 outcome,
               }
@@ -112,14 +119,7 @@
                 taskId = recordToTask.get(String(key)) || null
               }
 
-              // 优先尝试 v3 标注可视化图（带检测框），失败再回退到 v1 历史原图。
-              if (taskId) {
-                const vizPath = `/ai-detection/api/v3/result/${encodeURIComponent(taskId)}/visualization`
-                const vizUrl = getBase() ? (getBase() + vizPath) : vizPath
-                const vizResp = await rawFetch(new Request(vizUrl, req))
-                if (vizResp.ok) return vizResp
-              }
-
+              // v1 历史图片接口统一返回原图，保证“预览”始终展示原始图片。
               if (recordId) {
                 url.pathname = url.pathname.replace(`/${m[1]}/image`, `/${encodeURIComponent(recordId)}/image`)
                 req = new Request(url.toString(), req)
@@ -145,6 +145,14 @@
           } catch {}
           return resp
         }
+
+        // 暴露给后续 DOM 叠框脚本使用
+        window.__AI_DET_BRIDGE__ = {
+          taskToRecord,
+          recordToTask,
+          bboxByRecord,
+          bboxByTask,
+        }
       })()
     </script>
     <script type="module" crossorigin src="./assets/index-BjQnPnbX.js"></script>
@@ -153,12 +161,25 @@
       /* Fix cramped text/image in iframe embedding layout */
       .history-main .history-file {
         white-space: normal !important;
-        word-break: break-all !important;
-        line-height: 1.3 !important;
-        display: -webkit-box !important;
-        -webkit-line-clamp: 2;
-        -webkit-box-orient: vertical;
-        overflow: hidden !important;
+        word-break: break-word !important;
+        overflow-wrap: anywhere !important;
+        line-height: 1.5 !important;
+        max-height: none !important;
+        display: block !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+      }
+
+      .history-main .history-item,
+      .history-main .record-item {
+        align-items: flex-start !important;
+      }
+
+      .history-main .history-time,
+      .history-main .history-file,
+      .history-main .history-status {
+        transform: none !important;
+        letter-spacing: normal !important;
       }
 
       .viz-frame {
@@ -221,6 +242,148 @@
             run()
           }
         } catch (e) {}
+      })()
+    </script>
+    <script>
+      ;(() => {
+        const getBridge = () => window.__AI_DET_BRIDGE__ || null
+
+        const toRect = (bbox, naturalW, naturalH, clientW, clientH) => {
+          if (!Array.isArray(bbox) || bbox.length < 4) return null
+          let x = Number(bbox[0]) || 0
+          let y = Number(bbox[1]) || 0
+          let w = Number(bbox[2]) || 0
+          let h = Number(bbox[3]) || 0
+          if (w <= 0 || h <= 0) return null
+
+          // 若后端返回的是 x1,y1,x2,y2，则转换成 x,y,w,h
+          if (x + w > naturalW * 1.5 || y + h > naturalH * 1.5) {
+            const x2 = Number(bbox[2]) || x
+            const y2 = Number(bbox[3]) || y
+            w = Math.max(0, x2 - x)
+            h = Math.max(0, y2 - y)
+          }
+          if (w <= 0 || h <= 0) return null
+
+          const sx = clientW / Math.max(1, naturalW)
+          const sy = clientH / Math.max(1, naturalH)
+          return {
+            left: x * sx,
+            top: y * sy,
+            width: w * sx,
+            height: h * sy,
+          }
+        }
+
+        const ensureOverlay = (img) => {
+          if (!img || !(img instanceof HTMLImageElement)) return null
+          const parent = img.parentElement
+          if (!parent) return null
+
+          if (getComputedStyle(parent).position === 'static') {
+            parent.style.position = 'relative'
+          }
+          let box = parent.querySelector('.ai-bbox-overlay')
+          if (!box) {
+            box = document.createElement('div')
+            box.className = 'ai-bbox-overlay'
+            box.style.position = 'absolute'
+            box.style.pointerEvents = 'none'
+            box.style.border = '2px solid #1e66ff'
+            box.style.boxShadow = '0 0 0 1px rgba(255,255,255,0.75) inset'
+            box.style.borderRadius = '4px'
+            box.style.zIndex = '9'
+            parent.appendChild(box)
+          }
+          return box
+        }
+
+        const findReportImage = () => {
+          const reportTitle = Array.from(document.querySelectorAll('h1,h2,h3,h4,div,span,p')).find((el) =>
+            (el.textContent || '').replace(/\s+/g, '').includes('检测报告'),
+          )
+          if (reportTitle) {
+            const card = reportTitle.closest('.card, .panel, .report, .section') || reportTitle.parentElement
+            if (card) {
+              const img = card.querySelector('img')
+              if (img) return img
+            }
+          }
+          return null
+        }
+
+        const pickBBox = () => {
+          const bridge = getBridge()
+          if (!bridge) return null
+
+          const taskVals = Array.from(bridge.bboxByTask.values())
+          if (taskVals.length) return taskVals[taskVals.length - 1]
+          const recVals = Array.from(bridge.bboxByRecord.values())
+          if (recVals.length) return recVals[recVals.length - 1]
+          return null
+        }
+
+        const pickTaskId = () => {
+          const bridge = getBridge()
+          if (!bridge) return null
+          const taskKeys = Array.from(bridge.bboxByTask.keys())
+          if (taskKeys.length) return taskKeys[taskKeys.length - 1]
+          const vals = Array.from(bridge.recordToTask.values())
+          if (vals.length) return vals[vals.length - 1]
+          return null
+        }
+
+        const ensureReportVisualization = (img) => {
+          if (!img || img.dataset.aiVizReady === '1') return
+          const taskId = pickTaskId()
+          if (!taskId) return
+          const vizSrc = `/ai-detection/api/v3/result/${encodeURIComponent(taskId)}/visualization`
+          if (!img.dataset.aiOrigSrc) {
+            img.dataset.aiOrigSrc = img.currentSrc || img.src || ''
+          }
+          img.onerror = () => {
+            const orig = img.dataset.aiOrigSrc || ''
+            if (orig) img.src = orig
+          }
+          img.dataset.aiVizReady = '1'
+          img.src = vizSrc
+        }
+
+        const drawReportBBox = () => {
+          const img = findReportImage()
+          if (!img) return
+          ensureReportVisualization(img)
+          if (!img.complete || !img.naturalWidth || !img.naturalHeight) return
+
+          const bbox = pickBBox()
+          if (!bbox) return
+
+          const overlay = ensureOverlay(img)
+          if (!overlay) return
+
+          const rect = toRect(bbox, img.naturalWidth, img.naturalHeight, img.clientWidth, img.clientHeight)
+          if (!rect) return
+          overlay.style.left = `${Math.max(0, rect.left)}px`
+          overlay.style.top = `${Math.max(0, rect.top)}px`
+          overlay.style.width = `${Math.max(2, rect.width)}px`
+          overlay.style.height = `${Math.max(2, rect.height)}px`
+          overlay.style.display = 'block'
+        }
+
+        const run = () => {
+          drawReportBBox()
+          const obs = new MutationObserver(() => drawReportBBox())
+          const root = document.body || document.documentElement
+          obs.observe(root, { childList: true, subtree: true, attributes: true })
+          window.addEventListener('resize', drawReportBBox)
+          setInterval(drawReportBBox, 1200)
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', run)
+        } else {
+          run()
+        }
       })()
     </script>
   </body>
