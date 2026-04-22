@@ -343,6 +343,8 @@ const mapRef = shallowRef<L.Map | null>(null)
 const markerLayerRef = shallowRef<L.LayerGroup | null>(null)
 const flowLayerRef = shallowRef<L.LayerGroup | null>(null)
 const topTipLayerRef = shallowRef<L.LayerGroup | null>(null)
+/** preferCanvas 时默认折线在 Canvas 上绘制，CSS stroke-dash 动画无效；比价流向单独走 SVG */
+const flowPathSvgRendererRef = shallowRef<L.SVG | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const categories = ref<TlCategoryRow[]>([])
@@ -575,6 +577,7 @@ function initMap() {
   const markerLayer = L.layerGroup().addTo(map)
   const flowLayer = L.layerGroup().addTo(map)
   const topTipLayer = L.layerGroup().addTo(map)
+  flowPathSvgRendererRef.value = L.svg({ padding: 0.5 })
   mapRef.value = map
   markerLayerRef.value = markerLayer
   flowLayerRef.value = flowLayer
@@ -686,6 +689,7 @@ function formatNum(n: number): string {
 }
 
 function clearComparisonOverlays() {
+  cancelFlowOverlayAnimations()
   flowLayerRef.value?.clearLayers()
   topTipLayerRef.value?.clearLayers()
   comparisonRanks.value = []
@@ -749,7 +753,72 @@ function buildSmartComparisonBody(
   }
 }
 
-function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): number {
+/** 二次贝塞尔采样（lat/lng 平面近似），弧线与 yulan.html 示意一致 */
+function quadraticBezierLatLng(
+  lat0: number,
+  lng0: number,
+  lat2: number,
+  lng2: number,
+  segments: number,
+  bulgeFactor = 0.38,
+): L.LatLngTuple[] {
+  const midLat = (lat0 + lat2) / 2
+  const midLng = (lng0 + lng2) / 2
+  const dLat = lat2 - lat0
+  const dLng = lng2 - lng0
+  const len = Math.hypot(dLat, dLng) || 1e-9
+  const ox = (-dLng / len) * len * bulgeFactor
+  const oy = (dLat / len) * len * bulgeFactor
+  const lat1 = midLat + ox
+  const lng1 = midLng + oy
+  const pts: L.LatLngTuple[] = []
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments
+    const omt = 1 - t
+    const lat = omt * omt * lat0 + 2 * omt * t * lat1 + t * t * lat2
+    const lng = omt * omt * lng0 + 2 * omt * t * lng1 + t * t * lng2
+    pts.push([lat, lng])
+  }
+  return pts
+}
+
+/** 排名 1 = 最优（最划算）；饱和亮绿。其余：橙 / 红（加浓便于底图上看清） */
+function comparisonFlowPalette(rank: number): {
+  base: string
+  main: string
+  baseClass: string
+  lineClass: string
+  moverInnerClass: string
+} {
+  if (rank === 1) {
+    return {
+      base: 'rgba(5, 150, 105, 0.55)',
+      main: '#059669',
+      baseClass: 'emap-flow-line-base emap-flow-line-base--best',
+      lineClass: 'emap-flow-line emap-flow-line--best',
+      moverInnerClass: 'emap-flow-mover emap-flow-mover--best',
+    }
+  }
+  if (rank === 2) {
+    return {
+      base: 'rgba(234, 88, 12, 0.52)',
+      main: '#ea580c',
+      baseClass: 'emap-flow-line-base emap-flow-line-base--orange',
+      lineClass: 'emap-flow-line emap-flow-line--orange',
+      moverInnerClass: 'emap-flow-mover emap-flow-mover--orange',
+    }
+  }
+  return {
+    base: 'rgba(220, 38, 38, 0.52)',
+    main: '#dc2626',
+    baseClass: 'emap-flow-line-base emap-flow-line-base--red',
+    lineClass: 'emap-flow-line emap-flow-line--red',
+    moverInnerClass: 'emap-flow-mover emap-flow-mover--red',
+  }
+}
+
+/** 方位角（度）：正北为 0，顺时针；用于箭头 ▶ 默认朝右时配合 rotate(bearing-90) */
+function bearingDegNav(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const φ1 = (lat1 * Math.PI) / 180
   const φ2 = (lat2 * Math.PI) / 180
   const Δλ = ((lng2 - lng1) * Math.PI) / 180
@@ -758,14 +827,65 @@ function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): num
   return (Math.atan2(y, x) * 180) / Math.PI
 }
 
-function pointAlongFrac(
-  lat1: number,
-  lng1: number,
-  lat2: number,
-  lng2: number,
-  t: number,
-): [number, number] {
-  return [lat1 + (lat2 - lat1) * t, lng1 + (lng2 - lng1) * t]
+const flowOverlayCleanups: Array<() => void> = []
+
+function cancelFlowOverlayAnimations() {
+  for (const fn of flowOverlayCleanups) {
+    try {
+      fn()
+    } catch {
+      /* noop */
+    }
+  }
+  flowOverlayCleanups.length = 0
+}
+
+/** 沿折线移动的箭头组（▶▶▶），随路径切线转向 */
+function attachFlowMoverAlongCurve(
+  flowLayer: L.LayerGroup,
+  curve: L.LatLngTuple[],
+  durationMs: number,
+  moverInnerClass: string,
+): void {
+  if (curve.length < 2) return
+  const state = { cancelled: false, raf: 0 }
+  const marker = L.marker(curve[0], {
+    icon: L.divIcon({
+      className: 'emap-flow-mover-wrap',
+      html: `<div class="${moverInnerClass}" aria-hidden="true"><span class="emap-flow-arrow-triple"><span>▶</span><span>▶</span><span>▶</span></span></div>`,
+      iconSize: [36, 20],
+      iconAnchor: [18, 10],
+    }),
+    interactive: false,
+  }).addTo(flowLayer)
+  let start = performance.now()
+  const step = () => {
+    if (state.cancelled) return
+    const now = performance.now()
+    const u = ((now - start) % durationMs) / durationMs
+    const f = u * (curve.length - 1)
+    const idx = Math.min(Math.floor(f), curve.length - 2)
+    const localT = f - idx
+    const p0 = curve[idx]!
+    const p1 = curve[idx + 1]!
+    const lat = p0[0] + (p1[0] - p0[0]) * localT
+    const lng = p0[1] + (p1[1] - p0[1]) * localT
+    marker.setLatLng([lat, lng])
+    const br = bearingDegNav(p0[0], p0[1], p1[0], p1[1])
+    const tri = marker.getElement()?.querySelector('.emap-flow-arrow-triple') as HTMLElement | null
+    if (tri) tri.style.transform = `rotate(${br - 90}deg)`
+    state.raf = requestAnimationFrame(step)
+  }
+  state.raf = requestAnimationFrame(step)
+  flowOverlayCleanups.push(() => {
+    state.cancelled = true
+    cancelAnimationFrame(state.raf)
+    try {
+      flowLayer.removeLayer(marker)
+    } catch {
+      /* 可能已被 clearLayers */
+    }
+  })
 }
 
 function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
@@ -946,40 +1066,48 @@ function findSmelterPoint(name: string): MapPoint | null {
 function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[]) {
   const flowLayer = flowLayerRef.value
   const tipLayer = topTipLayerRef.value
+  const flowRenderer = flowPathSvgRendererRef.value
   if (!flowLayer || !tipLayer) return
+  cancelFlowOverlayAnimations()
   flowLayer.clearLayers()
   tipLayer.clearLayers()
-  const palette = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#059669', '#0ea5e9']
   const list = ranks.slice(0, MAX_MAP_FLOW_TARGETS)
   for (let i = 0; i < list.length; i++) {
     const row = list[i]!
     const smelter = findSmelterPoint(row.smelter)
     if (!smelter) continue
-    const color = palette[i % palette.length]!
-    L.polyline(
-      [
-        [warehouse.lat, warehouse.lng],
-        [smelter.lat, smelter.lng],
-      ],
-      {
-        color,
-        weight: 3,
-        opacity: 0.88,
-        dashArray: '10 10',
-        className: 'emap-flow-line',
-      },
-    ).addTo(flowLayer)
-    const br = bearingDeg(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng)
-    const arrowPt = pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.82)
-    L.marker(arrowPt, {
-      icon: L.divIcon({
-        className: 'emap-flow-arrow-wrap',
-        html: `<div class="emap-flow-arrow" style="color:${color};transform:rotate(${br - 90}deg)">▶</div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
-      }),
-      interactive: false,
-    }).addTo(flowLayer)
+    const curve = quadraticBezierLatLng(
+      warehouse.lat,
+      warehouse.lng,
+      smelter.lat,
+      smelter.lng,
+      56,
+      0.36 + (i % 5) * 0.02,
+    )
+    const palette = comparisonFlowPalette(row.rank)
+    const staggerClass = `emap-flow-stagger-${i % 6}`
+    const baseOpts = {
+      color: palette.base,
+      weight: 5,
+      opacity: 1,
+      lineCap: 'round' as const,
+      lineJoin: 'round' as const,
+      className: palette.baseClass,
+      ...(flowRenderer ? { renderer: flowRenderer } : {}),
+    }
+    const dashOpts = {
+      color: palette.main,
+      weight: 3.2,
+      opacity: 0.95,
+      lineCap: 'round' as const,
+      lineJoin: 'round' as const,
+      dashArray: '14 28',
+      className: `${palette.lineClass} ${staggerClass}`,
+      ...(flowRenderer ? { renderer: flowRenderer } : {}),
+    }
+    L.polyline(curve, baseOpts).addTo(flowLayer)
+    L.polyline(curve, dashOpts).addTo(flowLayer)
+    attachFlowMoverAlongCurve(flowLayer, curve, 2200 + (i % 4) * 280, palette.moverInnerClass)
     L.tooltip({
       permanent: true,
       direction: 'top',
@@ -1400,6 +1528,7 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  cancelFlowOverlayAnimations()
   if (forecastTrendResizeHandler) {
     window.removeEventListener('resize', forecastTrendResizeHandler)
     forecastTrendResizeHandler = null
@@ -1411,6 +1540,7 @@ onBeforeUnmount(() => {
   markerLayerRef.value = null
   flowLayerRef.value = null
   topTipLayerRef.value = null
+  flowPathSvgRendererRef.value = null
 })
 </script>
 
@@ -2079,27 +2209,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 
-.emap-flow-line {
-  stroke-dasharray: 10 10;
-  animation: emap-flow 1s linear infinite;
-}
-
-.emap-flow-arrow-wrap {
-  background: transparent;
-  border: none;
-}
-
-.emap-flow-arrow {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  font-size: 11px;
-  line-height: 1;
-  font-weight: 700;
-  text-shadow: 0 0 2px #fff, 0 0 2px #fff;
-}
+/* 比价流向样式见文件末尾「非 scoped」块：Leaflet 的 SVG path 在 .leaflet-container 下，且 preferCanvas 时需单独 SVG 渲染器 */
 
 .emap-rank-tip {
   background: rgba(15, 23, 42, 0.88);
@@ -2111,13 +2221,108 @@ onBeforeUnmount(() => {
   line-height: 1.35;
   padding: 6px 8px;
 }
+</style>
 
-@keyframes emap-flow {
-  0% {
-    stroke-dashoffset: 20;
-  }
-  100% {
-    stroke-dashoffset: 0;
+<style>
+/* 比价流向：preferCanvas 时默认 Canvas 无线流动画，脚本为流向折线指定 L.svg()；全局样式命中 overlay SVG */
+.leaflet-container svg path.emap-flow-line-base--best {
+  filter: drop-shadow(0 0 4px rgba(5, 150, 105, 0.85));
+}
+.leaflet-container svg path.emap-flow-line-base--orange {
+  filter: drop-shadow(0 0 3px rgba(234, 88, 12, 0.75));
+}
+.leaflet-container svg path.emap-flow-line-base--red {
+  filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.78));
+}
+
+.leaflet-container svg path.emap-flow-line {
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  animation: emap-flow-dash 2.2s linear infinite;
+}
+.leaflet-container svg path.emap-flow-line--best {
+  filter: drop-shadow(0 0 5px rgba(16, 185, 129, 1));
+}
+.leaflet-container svg path.emap-flow-line--orange {
+  filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.95));
+}
+.leaflet-container svg path.emap-flow-line--red {
+  filter: drop-shadow(0 0 4px rgba(248, 113, 113, 0.95));
+}
+
+.leaflet-container svg path.emap-flow-stagger-1 {
+  animation-delay: 0.2s;
+}
+.leaflet-container svg path.emap-flow-stagger-2 {
+  animation-delay: 0.4s;
+}
+.leaflet-container svg path.emap-flow-stagger-3 {
+  animation-delay: 0.6s;
+}
+.leaflet-container svg path.emap-flow-stagger-4 {
+  animation-delay: 0.8s;
+}
+.leaflet-container svg path.emap-flow-stagger-5 {
+  animation-delay: 1s;
+}
+
+.leaflet-container .emap-flow-mover-wrap {
+  background: transparent !important;
+  border: none !important;
+}
+
+.leaflet-container .emap-flow-mover {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 20px;
+  margin: 0;
+  pointer-events: none;
+}
+
+.leaflet-container .emap-flow-arrow-triple {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  line-height: 1;
+  transform-origin: center center;
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: -0.12em;
+  user-select: none;
+}
+
+.leaflet-container .emap-flow-arrow-triple span {
+  display: inline-block;
+}
+
+.leaflet-container .emap-flow-mover--best .emap-flow-arrow-triple {
+  color: #10b981;
+  text-shadow:
+    0 0 6px rgba(16, 185, 129, 1),
+    0 0 2px #022c22,
+    0 1px 0 #065f46;
+}
+.leaflet-container .emap-flow-mover--orange .emap-flow-arrow-triple {
+  color: #f97316;
+  text-shadow:
+    0 0 6px rgba(249, 115, 22, 0.95),
+    0 0 2px #431407,
+    0 1px 0 #9a3412;
+}
+.leaflet-container .emap-flow-mover--red .emap-flow-arrow-triple {
+  color: #ef4444;
+  text-shadow:
+    0 0 6px rgba(239, 68, 68, 0.95),
+    0 0 2px #450a0a,
+    0 1px 0 #991b1b;
+}
+
+@keyframes emap-flow-dash {
+  to {
+    stroke-dashoffset: -126;
   }
 }
 </style>
