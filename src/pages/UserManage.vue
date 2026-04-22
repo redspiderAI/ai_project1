@@ -81,15 +81,28 @@
           <div class="row g-2">
             <div class="col-md-6">
               <label class="form-label">用户名</label>
-              <input v-model.trim="createForm.username" class="form-control form-control-sm" />
+              <input
+                v-model.trim="createForm.username"
+                class="form-control form-control-sm"
+                autocomplete="off"
+              />
             </div>
             <div class="col-md-6">
               <label class="form-label">姓名</label>
-              <input v-model.trim="createForm.real_name" class="form-control form-control-sm" />
+              <input
+                v-model.trim="createForm.real_name"
+                class="form-control form-control-sm"
+                autocomplete="off"
+              />
             </div>
             <div class="col-md-6">
               <label class="form-label">密码</label>
-              <input v-model.trim="createForm.password" type="password" class="form-control form-control-sm" />
+              <input
+                v-model.trim="createForm.password"
+                type="password"
+                class="form-control form-control-sm"
+                autocomplete="new-password"
+              />
             </div>
             <div class="col-md-6">
               <label class="form-label">角色</label>
@@ -100,11 +113,19 @@
             </div>
             <div class="col-md-6">
               <label class="form-label">手机号</label>
-              <input v-model.trim="createForm.phone" class="form-control form-control-sm" />
+              <input
+                v-model.trim="createForm.phone"
+                class="form-control form-control-sm"
+                autocomplete="off"
+              />
             </div>
             <div class="col-md-6">
               <label class="form-label">邮箱</label>
-              <input v-model.trim="createForm.email" class="form-control form-control-sm" />
+              <input
+                v-model.trim="createForm.email"
+                class="form-control form-control-sm"
+                autocomplete="off"
+              />
             </div>
           </div>
           <div class="dialog-actions mt-3">

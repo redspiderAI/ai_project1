@@ -71,20 +71,32 @@
               <span v-else-if="categoriesError" class="emap-cat-toolbar-err small">{{ categoriesError }}</span>
               <span v-else class="text-muted small">勾选品类并填写吨数，至少一项 &gt; 0</span>
             </div>
-            <div v-if="categories.length" class="emap-cat-toolbar-list">
-              <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
-                <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
-                <span class="emap-cat-name">{{ c.name }}</span>
-                <input
-                  v-model="categoryPrefs[c.id].tons"
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  class="form-control form-control-sm emap-cat-tons"
-                  placeholder="吨"
-                  :disabled="!categoryPrefs[c.id].selected"
-                />
-              </label>
+            <div v-if="categories.length">
+              <div class="emap-cat-toolbar-list">
+                <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
+                  <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
+                  <span class="emap-cat-name">{{ c.name }}</span>
+                  <input
+                    v-model="categoryPrefs[c.id].tons"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    class="form-control form-control-sm emap-cat-tons"
+                    placeholder="吨"
+                    :disabled="!categoryPrefs[c.id].selected"
+                  />
+                </label>
+              </div>
+              <div class="emap-cat-toolbar-actions">
+                <button
+                  type="button"
+                  class="btn btn-sm btn-success"
+                  :disabled="categoriesLoading || compareLoading || loading"
+                  @click="confirmComparisonConditions"
+                >
+                  确定
+                </button>
+              </div>
             </div>
             <div v-else-if="!categoriesLoading && !categoriesError" class="text-muted small">
               暂无品类，请稍后刷新或检查接口。
@@ -95,49 +107,120 @@
     </div>
     <div ref="mapWrapRef" class="emap-map-wrap">
       <div ref="mapElRef" class="emap-map" />
-      <div class="emap-side-card">
-        <div class="emap-side-title">地图联动</div>
-        <template v-if="selectedWarehouse">
-          <div class="emap-side-line"><strong>已选库房：</strong>{{ selectedWarehouse.title }}</div>
-          <div class="emap-side-line text-muted">{{ selectedWarehouse.subtitle }}</div>
-          <div class="emap-side-actions">
+      <button
+        v-if="mapToolsCollapsed"
+        type="button"
+        class="emap-map-tools-tab"
+        @click="mapToolsCollapsed = false"
+      >
+        地图工具
+      </button>
+      <transition name="emap-tools-slide">
+        <div v-if="!mapToolsCollapsed" class="emap-map-tools">
+          <div class="emap-map-tools-head">
+            <div class="emap-map-tools-title">地图工具</div>
+          </div>
+          <label class="emap-tool-check">
+            <input v-model="enableCoordPick" type="checkbox" class="form-check-input" />
+            <span>点击坐标</span>
+          </label>
+          <label class="emap-tool-check">
+            <input v-model="enableAutoZoomOnPointClick" type="checkbox" class="form-check-input" />
+            <span>点击点位是否放大</span>
+          </label>
+          <div v-if="lastClickedCoordText" class="emap-tool-coord text-muted">
+            {{ lastClickedCoordText }}
+          </div>
+          <button
+            type="button"
+            class="emap-map-tools-arrow"
+            title="收起工具栏"
+            @click="mapToolsCollapsed = true"
+          >
+            ▶
+          </button>
+        </div>
+      </transition>
+      <div v-if="selectedWarehouse" class="emap-floating-actions">
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-primary"
+          :disabled="compareLoading"
+          @click="runComparisonForWarehouse(selectedWarehouse)"
+        >
+          {{ compareLoading ? '比价中…' : '重新比价' }}
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-success"
+          :disabled="forecastLoading"
+          @click="runForecastForWarehouse(selectedWarehouse)"
+        >
+          {{ forecastLoading ? '预测中…' : '预测送货量' }}
+        </button>
+        <button
+          v-if="comparisonRanks.length"
+          type="button"
+          class="btn btn-sm btn-outline-dark"
+          @click="openComparisonModal"
+        >
+          查看比价结果
+        </button>
+      </div>
+      <div v-if="comparisonModalVisible" class="emap-cmp-panel" :class="{ 'emap-cmp-panel--collapsed': comparisonPanelCollapsed }">
+        <div class="emap-cmp-panel-head">
+          <h4 class="emap-cmp-panel-title">{{ comparisonModalTitle }}</h4>
+          <div class="emap-cmp-panel-head-actions">
             <button
               type="button"
-              class="btn btn-sm btn-outline-primary"
-              :disabled="compareLoading"
-              @click="runComparisonForWarehouse(selectedWarehouse)"
+              class="emap-cmp-panel-toggle"
+              :title="comparisonPanelCollapsed ? '展开' : '收起'"
+              @click="comparisonPanelCollapsed = !comparisonPanelCollapsed"
             >
-              {{ compareLoading ? '比价中…' : '重新比价' }}
+              {{ comparisonPanelCollapsed ? '展开' : '收起' }}
             </button>
-            <button
-              type="button"
-              class="btn btn-sm btn-outline-success"
-              :disabled="forecastLoading"
-              @click="runForecastForWarehouse(selectedWarehouse)"
-            >
-              {{ forecastLoading ? '预测中…' : '预测送货量' }}
-            </button>
+            <button type="button" class="emap-cmp-panel-close" @click="closeComparisonModal">&times;</button>
           </div>
-          <div v-if="comparisonRanks.length" class="emap-side-block">
-            <div class="emap-side-subtitle">
-              冶炼厂利润排行
-              <span v-if="lastComparisonSortKey" class="text-muted fw-normal">（{{ lastComparisonSortKey }}）</span>
-            </div>
-            <div class="emap-rank-scroll">
-              <div
-                v-for="item in comparisonRanks"
-                :key="`${item.rank}-${item.smelter}`"
-                class="emap-rank-item"
-              >
-                <span>#{{ item.rank }} {{ item.smelter }}</span>
-                <span class="text-success">净收益 {{ formatNum(item.netProfit) }}</span>
-              </div>
-            </div>
+        </div>
+        <div v-if="!comparisonPanelCollapsed" class="emap-cmp-summary">
+          <div class="emap-cmp-summary-card">
+            <div class="emap-cmp-summary-label">最优方案</div>
+            <div class="emap-cmp-summary-value">{{ comparisonSummary.bestSmelter || '-' }}</div>
           </div>
-        </template>
-        <div v-else class="text-muted">点击业务库房点位，将按当前比价类型与品类吨数自动比价，并绘制指向冶炼厂的箭头。</div>
-        <div v-if="forecastError" class="emap-side-error">{{ forecastError }}</div>
-        <div v-if="compareError" class="emap-side-error">{{ compareError }}</div>
+          <div class="emap-cmp-summary-card">
+            <div class="emap-cmp-summary-label">总利润</div>
+            <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.bestProfit) }}</div>
+          </div>
+          <div class="emap-cmp-summary-card">
+            <div class="emap-cmp-summary-label">较第二名多赚</div>
+            <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.marginToSecond) }}</div>
+          </div>
+        </div>
+        <div v-if="!comparisonPanelCollapsed" class="emap-cmp-table-wrap">
+          <table class="table table-sm table-striped align-middle mb-0">
+            <thead>
+              <tr>
+                <th>排名</th>
+                <th>冶炼厂名称</th>
+                <th>总回收价</th>
+                <th>估算运费</th>
+                <th>利润</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="!comparisonRanks.length">
+                <td colspan="5" class="text-center text-muted py-3">暂无比价明细（接口已返回成功）</td>
+              </tr>
+              <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
+                <td>{{ row.rank }}</td>
+                <td>{{ row.smelter }}</td>
+                <td>¥ {{ formatNum(row.totalRecovery) }}</td>
+                <td>¥ {{ formatNum(row.freightPerTon) }}</td>
+                <td class="text-success fw-semibold">¥ {{ formatNum(row.netProfit) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
       <div class="emap-legend">
         <span class="emap-legend-item"
@@ -181,7 +264,7 @@
 </template>
 
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from 'vue'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import iconRetinaUrl from 'leaflet/dist/images/marker-icon-2x.png'
@@ -269,7 +352,7 @@ const categoriesError = ref('')
 function ensureCategoryPrefsForList(list: TlCategoryRow[]) {
   for (const c of list) {
     if (categoryPrefs[c.id] === undefined) {
-      categoryPrefs[c.id] = { selected: true, tons: '0' }
+      categoryPrefs[c.id] = { selected: false, tons: '0' }
     }
   }
 }
@@ -295,11 +378,21 @@ const forecastModalTitle = ref('')
 const forecastModalMeta = ref<ForecastChartMeta | null>(null)
 const forecastModalDates = ref<string[]>([])
 const forecastModalValues = ref<number[]>([])
+const comparisonModalVisible = ref(false)
+const comparisonModalTitle = ref('比价结果')
+const comparisonPanelCollapsed = ref(false)
 const forecastTrendCanvasRef = ref<HTMLCanvasElement | null>(null)
+const enableCoordPick = ref(false)
+const enableAutoZoomOnPointClick = ref(true)
+const lastClickedCoordText = ref('')
+const mapToolsCollapsed = ref(false)
 const selectedWarehouse = ref<MapPoint | null>(null)
 const comparisonType = ref<'base' | 'tax3'>('base')
 /** 与品类 id 对应：默认全选、吨数默认 1（与智能比价一致可改） */
 const categoryPrefs = reactive<Record<number, { selected: boolean; tons: string }>>({})
+const confirmedCategoryIds = ref<number[]>([])
+const confirmedTotalTons = ref(0)
+const confirmedPriceMode = ref<'base' | 'tax3'>('base')
 const comparisonRanks = ref<ComparisonRankItem[]>([])
 const lastComparisonSortKey = ref('')
 const allWarehousePoints = ref<MapPoint[]>([])
@@ -472,6 +565,13 @@ function initMap() {
     })
     resizeObs.observe(mapWrapRef.value)
   }
+
+  map.on('click', (evt: L.LeafletMouseEvent) => {
+    if (!enableCoordPick.value) return
+    const lat = evt.latlng.lat.toFixed(6)
+    const lng = evt.latlng.lng.toFixed(6)
+    lastClickedCoordText.value = `坐标：${lat}, ${lng}`
+  })
 }
 
 function warehouseIcon(cssColor: string): L.DivIcon {
@@ -516,7 +616,17 @@ function renderMarkers(points: MapPoint[]) {
         selectedWarehouse.value = p
         forecastError.value = ''
         closeForecastModal()
+        if (enableAutoZoomOnPointClick.value) {
+          const zoom = Math.max(map.getZoom(), 9)
+          map.setView([p.lat, p.lng], zoom, { animate: true })
+        }
         void runComparisonForWarehouse(p)
+      })
+    } else {
+      marker.on('click', () => {
+        if (!enableAutoZoomOnPointClick.value) return
+        const zoom = Math.max(map.getZoom(), 9)
+        map.setView([p.lat, p.lng], zoom, { animate: true })
       })
     }
     marker.addTo(markerLayer)
@@ -560,6 +670,7 @@ function clearComparisonOverlays() {
   comparisonRanks.value = []
   lastComparisonSortKey.value = ''
   compareError.value = ''
+  comparisonModalVisible.value = false
 }
 
 function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
@@ -575,6 +686,24 @@ function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
     }
   }
   return { ids, totalTons }
+}
+
+function confirmComparisonConditions() {
+  compareError.value = ''
+  const { ids, totalTons } = getSelectedCategoryPayload()
+  if (!ids.length || totalTons <= 0) {
+    compareError.value = '请至少勾选一个品类并填写大于 0 的吨数（单位：吨）'
+    return
+  }
+  confirmedCategoryIds.value = [...ids]
+  confirmedTotalTons.value = totalTons
+  confirmedPriceMode.value = comparisonType.value
+  toolbarCollapsed.value = true
+  try {
+    sessionStorage.setItem(EMAP_TOOLBAR_COLLAPSED_KEY, '1')
+  } catch {
+    /* 隐私模式等 */
+  }
 }
 
 /** 与嵌入页智能比价相同字段（中文键名） */
@@ -656,12 +785,85 @@ function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
   return out.sort((a, b) => a.rank - b.rank)
 }
 
+function pickComparisonPayload(raw: Record<string, unknown>): Record<string, unknown> | null {
+  const data = raw['data']
+  if (data != null && typeof data === 'object' && !Array.isArray(data)) {
+    return data as Record<string, unknown>
+  }
+  return null
+}
+
+function walkObjectArraysDeep(input: unknown, depth = 0): Record<string, unknown>[][] {
+  if (depth > 4 || input == null) return []
+  const out: Record<string, unknown>[][] = []
+  if (Array.isArray(input)) {
+    const rows = input.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+    if (rows.length) out.push(rows)
+    return out
+  }
+  if (typeof input !== 'object') return out
+  const obj = input as Record<string, unknown>
+  for (const v of Object.values(obj)) {
+    if (Array.isArray(v)) {
+      const rows = v.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      if (rows.length) out.push(rows)
+      continue
+    }
+    if (v && typeof v === 'object') out.push(...walkObjectArraysDeep(v, depth + 1))
+  }
+  return out
+}
+
+function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem[] {
+  const out: ComparisonRankItem[] = []
+  let fallback = 0
+  for (const row of rows) {
+    const smelter = pickStr(row, [
+      '冶炼厂名称',
+      '冶炼厂',
+      '冶炼厂名',
+      'smelter_name',
+      'smelter',
+      'factory_name',
+      'name',
+    ])
+    const hasProfitLike =
+      pickNumber(row, ['利润', '净收益', '净利润', 'profit', 'net_profit', '总利润']) != null
+    if (!smelter || !hasProfitLike) continue
+    fallback += 1
+    const rank = pickNumber(row, ['排名', '排行', '排序', 'rank', '名次']) ?? fallback
+    const netProfit =
+      pickNumber(row, ['利润', '净收益', '净利润', 'profit', 'net_profit', '总利润']) ?? 0
+    const totalRecovery =
+      pickNumber(row, ['总回收价', '回收额', '物料总价', 'total_recovery', 'material_sum']) ?? 0
+    const freightPerTon =
+      pickNumber(row, ['估算运费', '运费单价', '运费/吨', 'freight_per_ton', 'freight']) ?? 0
+    const qtySum = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数']) ?? 0
+    out.push({
+      rank,
+      smelter,
+      netProfit: toDisplayNum(netProfit),
+      totalRecovery: toDisplayNum(totalRecovery),
+      freightPerTon: toDisplayNum(freightPerTon),
+      qtySum: toDisplayNum(qtySum),
+    })
+  }
+  return out.sort((a, b) => a.rank - b.rank)
+}
+
 function rankingsFromComparisonResponse(
   raw: Record<string, unknown>,
   detailRows: Record<string, unknown>[],
 ): ComparisonRankItem[] {
-  const fromApi = parseSmelterProfitRankArray(raw['冶炼厂利润排行'])
+  const payload = pickComparisonPayload(raw)
+  const fromApi = parseSmelterProfitRankArray(
+    raw['冶炼厂利润排行'] ?? payload?.['冶炼厂利润排行'] ?? payload?.['smelter_profit_rank'],
+  )
   if (fromApi.length) return rerankSequentially(fromApi)
+  for (const rows of walkObjectArraysDeep(payload ?? raw)) {
+    const parsed = parseRankRowsLoose(rows)
+    if (parsed.length) return rerankSequentially(parsed)
+  }
   return aggregateComparisonRows(detailRows)
 }
 
@@ -782,26 +984,32 @@ async function runComparisonForWarehouse(warehouse: MapPoint) {
       .filter((x): x is number => x != null)
     if (!smelterIds.length) throw new Error('暂无可比价的冶炼厂')
 
-    const { ids: categoryIds, totalTons } = getSelectedCategoryPayload()
-    if (!categoryIds.length || totalTons <= 0) {
-      throw new Error('请至少勾选一个品类并填写大于 0 的吨数（单位：吨）')
+    if (!confirmedCategoryIds.value.length || confirmedTotalTons.value <= 0) {
+      throw new Error('请先在上方选择品类吨数后点击“确定”，再点击仓库比价')
     }
 
     const body = buildSmartComparisonBody(
       whId,
       smelterIds,
-      categoryIds,
-      totalTons,
-      comparisonType.value,
+      confirmedCategoryIds.value,
+      confirmedTotalTons.value,
+      confirmedPriceMode.value,
     )
     const raw = await postTlGetComparison(body)
-    const sortKey = raw['最优价排序口径']
+    const payload = pickComparisonPayload(raw)
+    const sortKey = raw['最优价排序口径'] ?? payload?.['最优价排序口径']
     lastComparisonSortKey.value =
       sortKey != null && String(sortKey).trim() !== '' ? String(sortKey).trim() : ''
     const detailRows = tlUnwrapComparisonDetails(raw)
     const ranks = rankingsFromComparisonResponse(raw, detailRows)
     comparisonRanks.value = ranks
-    renderComparisonOverlay(warehouse, ranks)
+    if (ranks.length) {
+      renderComparisonOverlay(warehouse, ranks)
+    } else {
+      flowLayerRef.value?.clearLayers()
+      topTipLayerRef.value?.clearLayers()
+    }
+    openComparisonModal()
   } catch (err) {
     clearComparisonOverlays()
     compareError.value = err instanceof Error ? err.message : String(err)
@@ -861,6 +1069,31 @@ function closeForecastModal() {
   forecastModalDates.value = []
   forecastModalValues.value = []
   forecastModalTitle.value = ''
+}
+
+const comparisonSummary = computed(() => {
+  const sorted = [...comparisonRanks.value].sort((a, b) => a.rank - b.rank)
+  const first = sorted[0]
+  const second = sorted[1]
+  const bestProfit = first?.netProfit ?? 0
+  const marginToSecond = first && second ? bestProfit - second.netProfit : 0
+  return {
+    bestSmelter: first?.smelter ?? '',
+    bestProfit: toDisplayNum(bestProfit),
+    marginToSecond: toDisplayNum(marginToSecond),
+  }
+})
+
+function openComparisonModal() {
+  const wh = selectedWarehouse.value?.title?.trim()
+  comparisonModalTitle.value = wh ? `比价结果：${wh}` : '比价结果'
+  comparisonPanelCollapsed.value = false
+  comparisonModalVisible.value = true
+}
+
+function closeComparisonModal() {
+  comparisonModalVisible.value = false
+  comparisonPanelCollapsed.value = false
 }
 
 function drawForecastTrendChart() {
@@ -1265,6 +1498,12 @@ onBeforeUnmount(() => {
   padding: 4px 2px;
 }
 
+.emap-cat-toolbar-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .emap-cat-pill {
   display: inline-flex;
   align-items: center;
@@ -1335,6 +1574,234 @@ onBeforeUnmount(() => {
   width: 100%;
   height: 100%;
   background: #dfe7ef;
+}
+
+.emap-floating-actions {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 1000;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 10px;
+  padding: 8px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+}
+
+.emap-map-tools {
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%);
+  z-index: 1000;
+  min-width: 190px;
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 10px;
+  padding: 8px 10px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  font-size: 12px;
+  overflow: visible;
+}
+
+.emap-map-tools-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.emap-map-tools-title {
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.emap-map-tools-tab {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  transform: translateY(-50%);
+  z-index: 1000;
+  border: 1px solid #d1d5db;
+  border-right: none;
+  background: rgba(255, 255, 255, 0.95);
+  color: #1f2937;
+  padding: 10px 10px;
+  border-radius: 8px 0 0 8px;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.emap-map-tools-tab:hover {
+  background: #f8fafc;
+}
+
+.emap-tools-slide-enter-active,
+.emap-tools-slide-leave-active {
+  transition: transform 0.22s ease, opacity 0.22s ease;
+  transform-origin: right center;
+}
+
+.emap-tools-slide-enter-from,
+.emap-tools-slide-leave-to {
+  transform: translate(110%, -50%);
+  opacity: 0;
+}
+
+.emap-tools-slide-enter-to,
+.emap-tools-slide-leave-from {
+  transform: translate(0, -50%);
+  opacity: 1;
+}
+
+.emap-tool-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 6px;
+  color: #374151;
+}
+
+.emap-tool-check .form-check-input {
+  margin: 0;
+}
+
+.emap-tool-coord {
+  font-size: 11px;
+  line-height: 1.35;
+  word-break: break-all;
+}
+
+.emap-map-tools-arrow {
+  position: absolute;
+  top: 50%;
+  right: -14px;
+  transform: translateY(-50%);
+  width: 20px;
+  height: 44px;
+  border: 1px solid #d1d5db;
+  border-left: none;
+  border-radius: 0 8px 8px 0;
+  background: rgba(255, 255, 255, 0.96);
+  color: #1f2937;
+  font-size: 11px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+}
+
+.emap-map-tools-arrow:hover {
+  background: #f8fafc;
+}
+
+.emap-cmp-panel {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 1000;
+  width: min(560px, calc(100% - 24px));
+  max-height: calc(100% - 24px);
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  padding: 10px 12px;
+  overflow: auto;
+}
+
+.emap-cmp-panel--collapsed {
+  width: min(420px, calc(100% - 24px));
+  max-height: none;
+  overflow: hidden;
+}
+
+.emap-cmp-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.emap-cmp-panel--collapsed .emap-cmp-panel-head {
+  margin-bottom: 0;
+}
+
+.emap-cmp-panel-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #111827;
+}
+
+.emap-cmp-panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.emap-cmp-panel-toggle {
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #f8fafc;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.emap-cmp-panel-toggle:hover {
+  background: #f1f5f9;
+}
+
+.emap-cmp-panel-close {
+  border: none;
+  background: transparent;
+  color: #6b7280;
+  font-size: 26px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+}
+
+.emap-cmp-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.emap-cmp-summary-card {
+  background: #f8fafc;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+
+.emap-cmp-summary-label {
+  font-size: 12px;
+  color: #64748b;
+  margin-bottom: 4px;
+}
+
+.emap-cmp-summary-value {
+  font-size: 14px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.emap-cmp-table-wrap {
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
 }
 
 .emap-side-card {
