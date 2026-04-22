@@ -844,6 +844,18 @@ function renderMarkers(points: MapPoint[]) {
     const popupHtml =
       p.kind === 'warehouse' ? warehousePopupHtml(p) : `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="text-muted small">${escapeHtml(p.subtitle)}</span></div>`
     marker.bindPopup(popupHtml)
+    marker.bindTooltip(popupHtml, {
+      sticky: false,
+      direction: 'top',
+      opacity: 1,
+      className: 'emap-marker-hover-tip',
+    })
+    marker.on('popupopen', () => {
+      marker.closeTooltip()
+    })
+    marker.on('tooltipopen', () => {
+      if (marker.isPopupOpen()) marker.closeTooltip()
+    })
     if (p.kind === 'warehouse') {
       marker.on('click', () => {
         selectedWarehouse.value = p
@@ -1343,6 +1355,7 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
       lineCap: 'round' as const,
       lineJoin: 'round' as const,
       className: palette.baseClass,
+      interactive: false,
       ...(flowRenderer ? { renderer: flowRenderer } : {}),
     }
     const dashOpts = {
@@ -1353,6 +1366,7 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
       lineJoin: 'round' as const,
       dashArray: '14 28',
       className: `${palette.lineClass} ${staggerClass}`,
+      interactive: false,
       ...(flowRenderer ? { renderer: flowRenderer } : {}),
     }
     L.polyline(curve, baseOpts).addTo(flowLayer)
@@ -2878,6 +2892,28 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.35;
   padding: 6px 8px;
+  pointer-events: none !important;
+}
+
+/* 仓库/冶炼厂悬浮：与弹窗同内容，不挡下方图钉点击 */
+.leaflet-tooltip.emap-marker-hover-tip {
+  background: rgba(6, 18, 40, 0.96) !important;
+  color: #e2e8f0 !important;
+  border: 1px solid rgba(34, 211, 238, 0.35) !important;
+  border-radius: 8px !important;
+  padding: 8px 10px !important;
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  max-width: min(280px, 85vw);
+}
+
+.leaflet-tooltip.emap-marker-hover-tip .leaflet-tooltip-content {
+  margin: 0;
+}
+
+.emap-shell--dashboard .leaflet-tooltip.emap-marker-hover-tip .text-muted {
+  color: #94a3b8 !important;
 }
 
 /* 大屏主题：压暗瓦片、与面板色调统一（仅 .emap-shell--dashboard 内） */
@@ -2912,6 +2948,16 @@ onBeforeUnmount(() => {
 </style>
 
 <style>
+/* 比价流向：折线不参与命中，避免挡住仓库/冶炼厂图钉的悬浮与点击 */
+.leaflet-container svg path[class*='emap-flow-line'] {
+  pointer-events: none !important;
+}
+
+/* 沿路径移动的箭头标记容器不拦截事件（interactive:false 的补充） */
+.leaflet-container .leaflet-marker:has(.emap-flow-mover-wrap) {
+  pointer-events: none !important;
+}
+
 /* 比价流向：preferCanvas 时默认 Canvas 无线流动画，脚本为流向折线指定 L.svg()；全局样式命中 overlay SVG */
 .leaflet-container svg path.emap-flow-line-base--best {
   filter: drop-shadow(0 0 4px rgba(5, 150, 105, 0.85));
