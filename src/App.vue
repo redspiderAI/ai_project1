@@ -80,19 +80,30 @@
     <div v-if="showLogin" class="login-mask">
       <div class="card login-card">
         <div class="card-body">
-          <h6 class="mb-3">用户登录</h6>
-          <div class="mb-2">
-            <label class="form-label">用户名</label>
-            <input v-model.trim="loginForm.username" class="form-control form-control-sm" />
+          <h6 class="login-title">用户登录</h6>
+          <div class="login-field">
+            <label class="form-label login-label">用户名</label>
+            <input
+              v-model.trim="loginForm.username"
+              class="form-control login-input"
+              placeholder="请输入用户名"
+              autocomplete="off"
+            />
           </div>
-          <div class="mb-2">
-            <label class="form-label">密码</label>
-            <input v-model.trim="loginForm.password" type="password" class="form-control form-control-sm" />
+          <div class="login-field">
+            <label class="form-label login-label">密码</label>
+            <input
+              v-model.trim="loginForm.password"
+              type="password"
+              class="form-control login-input"
+              placeholder="请输入密码"
+              autocomplete="new-password"
+            />
           </div>
-          <div v-if="loginError" class="alert alert-warning py-2 mb-2">{{ loginError }}</div>
+          <div v-if="loginError" class="alert alert-warning py-2 mb-2 login-error">{{ loginError }}</div>
           <div class="login-actions">
-            <button class="btn btn-sm btn-secondary" type="button" @click="showLogin = false">取消</button>
-            <button class="btn btn-sm btn-primary" type="button" :disabled="loginLoading" @click="submitLogin">
+            <button class="btn login-btn login-btn-cancel" type="button" @click="showLogin = false">取消</button>
+            <button class="btn login-btn login-btn-submit" type="button" :disabled="loginLoading" @click="submitLogin">
               {{ loginLoading ? '登录中…' : '登录' }}
             </button>
           </div>
@@ -103,7 +114,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import HistoryManage from './pages/HistoryManage.vue'
 import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
@@ -135,6 +146,12 @@ const showLogin = ref(false)
 const loginLoading = ref(false)
 const loginError = ref('')
 const loginForm = ref({ username: '', password: '' })
+
+watch(showLogin, (v) => {
+  if (!v) return
+  loginForm.value = { username: '', password: '' }
+  loginError.value = ''
+})
 
 function embeddedBasePath(section: 'detect' | 'price') {
   if (section === 'detect') return `${baseUrl}embedded/ai_test/index.html`
@@ -448,7 +465,8 @@ body {
   position: fixed;
   inset: 0;
   z-index: 1300;
-  background: rgba(0, 0, 0, 0.35);
+  background: rgba(15, 23, 42, 0.42);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -456,12 +474,91 @@ body {
 }
 
 .login-card {
-  width: min(420px, 100%);
+  width: min(440px, 100%);
+  border: none;
+  border-radius: 14px;
+  box-shadow: 0 18px 50px rgba(15, 23, 42, 0.32);
+  overflow: hidden;
+}
+
+.login-card .card-body {
+  padding: 20px 22px;
+}
+
+.login-title {
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.login-field {
+  margin-bottom: 12px;
+}
+
+.login-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  color: #334155;
+  font-weight: 600;
+}
+
+.login-input {
+  height: 40px;
+  border-radius: 10px;
+  border: 1px solid #d1d5db;
+  font-size: 14px;
+}
+
+.login-input:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+}
+
+.login-error {
+  border-radius: 10px;
+  font-size: 13px;
+  margin-top: 6px;
 }
 
 .login-actions {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+  margin-top: 14px;
+}
+
+.login-btn {
+  height: 36px;
+  border-radius: 9px;
+  padding: 0 16px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.login-btn-cancel {
+  border: 1px solid #d1d5db;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.login-btn-cancel:hover {
+  background: #f1f5f9;
+}
+
+.login-btn-submit {
+  border: none;
+  background: linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%);
+  color: #fff;
+}
+
+.login-btn-submit:hover {
+  filter: brightness(1.06);
+}
+
+.login-btn-submit:disabled {
+  opacity: 0.75;
+  cursor: not-allowed;
 }
 </style>
