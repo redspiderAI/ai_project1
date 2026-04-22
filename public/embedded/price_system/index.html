@@ -69,5 +69,44 @@
         } catch (e) {}
       })()
     </script>
+    <script>
+      ;(() => {
+        // 成功写入后，收起“识别结果确认”区，避免用户误以为未提交
+        const rawAlert = window.alert ? window.alert.bind(window) : null
+        if (!rawAlert) return
+
+        function markSavedState() {
+          const buttons = Array.from(document.querySelectorAll('button'))
+          const saveBtn = buttons.find((btn) => (btn.textContent || '').trim().includes('确认保存'))
+          if (saveBtn) {
+            saveBtn.disabled = true
+            saveBtn.textContent = '已保存'
+          }
+
+          const headers = Array.from(document.querySelectorAll('h1,h2,h3,h4,h5,div,span,p'))
+          const sectionTitle = headers.find((el) =>
+            (el.textContent || '').replace(/\s+/g, '').includes('识别结果确认'),
+          )
+          if (sectionTitle) {
+            const cardLike = sectionTitle.closest('.card') || sectionTitle.parentElement
+            if (cardLike) cardLike.classList.add('quote-result-saved-collapse')
+          }
+        }
+
+        window.alert = function (msg) {
+          const text = String(msg == null ? '' : msg)
+          const ret = rawAlert(msg)
+          if (/报价(写入)?成功|保存成功/.test(text)) {
+            setTimeout(markSavedState, 0)
+          }
+          return ret
+        }
+      })()
+    </script>
+    <style>
+      .quote-result-saved-collapse {
+        opacity: 0.72;
+      }
+    </style>
 </body>
 </html>

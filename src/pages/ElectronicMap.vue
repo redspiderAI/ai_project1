@@ -75,7 +75,7 @@
               <div class="emap-cat-toolbar-list">
                 <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
                   <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
-                  <span class="emap-cat-name">{{ c.name }}</span>
+                  <span class="emap-cat-name">{{ toCanonicalCategoryName(c.name) }}</span>
                   <input
                     v-model="categoryPrefs[c.id].tons"
                     type="number"
@@ -272,7 +272,6 @@ import iconUrl from 'leaflet/dist/images/marker-icon.png'
 import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import axios from 'axios'
 import { ApiPaths } from '../api/paths'
-import { FORECAST_DETAILS_FETCH_PAGE_SIZE } from '../api/fetchLimits'
 import {
   fetchTlCategories,
   fetchTlSmeltersAll,
@@ -349,6 +348,27 @@ const loadError = ref('')
 const categories = ref<TlCategoryRow[]>([])
 const categoriesLoading = ref(false)
 const categoriesError = ref('')
+
+function normalizeCategoryDisplayName(name: string): string {
+  const raw = String(name || '').trim()
+  if (!raw) return ''
+  // 地图筛选仅展示品种本名：常见别名分隔符后内容不展示
+  const first = raw.split(/[，,、/|；;]+/)[0] || raw
+  return first.trim()
+}
+
+function toCanonicalCategoryName(name: string): string {
+  const base = normalizeCategoryDisplayName(name)
+  const aliasMap: Record<string, string> = {
+    黑皮: '黑皮电瓶',
+    黑皮电池: '黑皮电瓶',
+    大白: '大白电池',
+    电信电池: '电信电瓶',
+    电动车: '电动车电池',
+    电动车电瓶: '电动车电池',
+  }
+  return aliasMap[base] ?? base
+}
 
 function ensureCategoryPrefsForList(list: TlCategoryRow[]) {
   for (const c of list) {
@@ -1046,10 +1066,10 @@ function parseForecastDetailError(e: unknown): string {
 
 /** 与 PurchaseQuantity.fetchDetailData 相同的分页请求方式 */
 async function fetchForecastDetailPaged(warehouses: string[]): Promise<Record<string, unknown>[]> {
-  const page_size = FORECAST_DETAILS_FETCH_PAGE_SIZE
+  const page_size = 500
   const all: Record<string, unknown>[] = []
   let page = 1
-  while (page <= 200) {
+  while (page <= 50) {
     const response = await axios.get(ApiPaths.forecastDetail, {
       params: { warehouses, page, page_size },
     })
@@ -1294,7 +1314,15 @@ async function loadCategories() {
   categoriesError.value = ''
   categoriesLoading.value = true
   try {
-    categories.value = await fetchTlCategories()
+    const mapped = (await fetchTlCategories()).map((c) => ({
+      ...c,
+      name: toCanonicalCategoryName(c.name) || c.name,
+    }))
+    const dedup = new Map<string, TlCategoryRow>()
+    for (const row of mapped) {
+      if (!dedup.has(row.name)) dedup.set(row.name, row)
+    }
+    categories.value = [...dedup.values()]
     ensureCategoryPrefsForList(categories.value)
   } catch (e) {
     categories.value = []
