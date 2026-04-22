@@ -141,6 +141,7 @@ const predictionSubTabs: Array<{ key: PredictionSubKey; label: string }> = [
 const activeSection = ref<SectionKey>('map')
 const predictionSubTab = ref<PredictionSubKey>('historyManage')
 const baseUrl = import.meta.env.BASE_URL
+const embeddedCacheVersion = `${Date.now()}`
 const isLoggedIn = ref(!!getToken())
 const showLogin = ref(false)
 const loginLoading = ref(false)
@@ -164,7 +165,7 @@ const embeddedIframeSrc = computed(() => {
   if (s !== 'detect' && s !== 'price') return 'about:blank'
   const path = embeddedBasePath(s)
   const sep = path.includes('?') ? '&' : '?'
-  return `${path}${sep}embed=1`
+  return `${path}${sep}embed=1&v=${encodeURIComponent(embeddedCacheVersion)}`
 })
 
 const activeFrameTitle = computed(() => {

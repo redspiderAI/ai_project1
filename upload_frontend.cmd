@@ -77,7 +77,12 @@ ssh %SSH_OPTS% -p %REMOTE_PORT% -i "%SSH_KEY%" %REMOTE_USER%@%REMOTE_HOST% "sh -
 if errorlevel 1 (
   echo [WARN] 兼容目录不可写：%REMOTE_DIR_FALLBACK%
 ) else (
-  tar -cf - -C "%LOCAL_DIR%" . | ssh %SSH_OPTS% -p %REMOTE_PORT% -i "%SSH_KEY%" %REMOTE_USER%@%REMOTE_HOST% "sh -lc 'timeout 60s tar -xf - -C %REMOTE_DIR_FALLBACK%'"
+  echo [SYNC] 清理旧文件后全量发布到兼容目录...
+  ssh %SSH_OPTS% -p %REMOTE_PORT% -i "%SSH_KEY%" %REMOTE_USER%@%REMOTE_HOST% "sh -lc 'timeout 20s bash -lc ""rm -rf %REMOTE_DIR_FALLBACK%/assets %REMOTE_DIR_FALLBACK%/embedded %REMOTE_DIR_FALLBACK%/index.html %REMOTE_DIR_FALLBACK%/favicon.svg %REMOTE_DIR_FALLBACK%/icons.svg""'"
+  if errorlevel 1 (
+    echo [WARN] 清理静态文件失败：%REMOTE_DIR_FALLBACK%
+  )
+  tar -cf - -C "%LOCAL_DIR%" . | ssh %SSH_OPTS% -p %REMOTE_PORT% -i "%SSH_KEY%" %REMOTE_USER%@%REMOTE_HOST% "sh -lc 'timeout 120s tar -xf - -C %REMOTE_DIR_FALLBACK%'"
   if errorlevel 1 (
     echo [WARN] 兼容目录上传失败：%REMOTE_DIR_FALLBACK%
   ) else (
