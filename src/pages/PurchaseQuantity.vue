@@ -168,13 +168,10 @@
         <p class="table-date-unit-note">说明：单元格内数字单位为吨。</p>
         <div class="pagination">
           <button @click="forecastManagerCurrentPage--" :disabled="forecastManagerCurrentPage === 1">上一页</button>
-          <span>第 {{ forecastManagerCurrentPage }} / {{ forecastManagerTotalPages }} 页</span>
+          <span
+            >第 {{ forecastManagerCurrentPage }} / {{ forecastManagerTotalPages }} 页（每页 {{ pivotGroupsPerPage }} 个大区经理）</span
+          >
           <button @click="forecastManagerCurrentPage++" :disabled="forecastManagerCurrentPage === forecastManagerTotalPages">下一页</button>
-          <select v-model="forecastManagerPageSize" @change="forecastManagerCurrentPage = 1">
-            <option :value="10">10条/页</option>
-            <option :value="20">20条/页</option>
-            <option :value="50">50条/页</option>
-          </select>
         </div>
       </div>
     </div>
@@ -365,13 +362,10 @@
         <p class="table-date-unit-note">说明：单元格内数字单位为吨。</p>
         <div class="pagination">
           <button @click="forecastWarehouseCurrentPage--" :disabled="forecastWarehouseCurrentPage === 1">上一页</button>
-          <span>第 {{ forecastWarehouseCurrentPage }} / {{ forecastWarehouseTotalPages }} 页</span>
+          <span
+            >第 {{ forecastWarehouseCurrentPage }} / {{ forecastWarehouseTotalPages }} 页（每页 {{ pivotGroupsPerPage }} 个仓库）</span
+          >
           <button @click="forecastWarehouseCurrentPage++" :disabled="forecastWarehouseCurrentPage === forecastWarehouseTotalPages">下一页</button>
-          <select v-model="forecastWarehousePageSize" @change="forecastWarehouseCurrentPage = 1">
-            <option :value="10">10条/页</option>
-            <option :value="20">20条/页</option>
-            <option :value="50">50条/页</option>
-          </select>
         </div>
       </div>
     </div>
@@ -430,6 +424,15 @@
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch, type Ref } from 'vue'
 import axios from 'axios'
 import { ApiPaths } from '../api/paths'
+import { FORECAST_DETAILS_FETCH_PAGE_SIZE } from '../api/fetchLimits'
+import { fetchForecastDimensionOptions } from '../api/dimensionOptions'
+import {
+  PIVOT_GROUPS_PER_PAGE,
+  paginatePivotRowsByGroup,
+  pivotGroupTotalPages,
+} from '../utils/pivotTablePagination'
+
+const pivotGroupsPerPage = PIVOT_GROUPS_PER_PAGE
 
 // ==================== 类型定义 ====================
 /** 与「送货量预测/明细」接口 items 项一致 */
@@ -483,20 +486,28 @@ const forecastManagerTableRows = ref<ForecastManagerTableRow[]>([])
 const forecastWarehouseTableRows = ref<ForecastWarehouseTableRow[]>([])
 
 const forecastManagerCurrentPage = ref(1)
-const forecastManagerPageSize = ref(10)
 const forecastWarehouseCurrentPage = ref(1)
-const forecastWarehousePageSize = ref(10)
 
 const forecastManagerTotal = computed(() => forecastManagerTableRows.value.length)
 const forecastWarehouseTotal = computed(() => forecastWarehouseTableRows.value.length)
 
+function forecastManagerGroupSort(a: ForecastManagerTableRow, b: ForecastManagerTableRow) {
+  const c = a.regional_manager.localeCompare(b.regional_manager, 'zh-CN')
+  if (c !== 0) return c
+  return a.smelter.localeCompare(b.smelter, 'zh-CN')
+}
+
 const forecastManagerTotalPages = computed(() =>
-  Math.max(1, Math.ceil(forecastManagerTableRows.value.length / forecastManagerPageSize.value))
+  pivotGroupTotalPages(forecastManagerTableRows.value, (r) => r.regional_manager, forecastManagerGroupSort),
 )
-const forecastManagerPaginatedRows = computed(() => {
-  const start = (forecastManagerCurrentPage.value - 1) * forecastManagerPageSize.value
-  return forecastManagerTableRows.value.slice(start, start + forecastManagerPageSize.value)
-})
+const forecastManagerPaginatedRows = computed(() =>
+  paginatePivotRowsByGroup(
+    forecastManagerTableRows.value,
+    forecastManagerCurrentPage.value,
+    (r) => r.regional_manager,
+    forecastManagerGroupSort,
+  ),
+)
 
 const forecastManagerDisplayRows = computed(() => {
   const rows = forecastManagerPaginatedRows.value
@@ -524,13 +535,25 @@ const forecastManagerDisplayRows = computed(() => {
   return out
 })
 
+function forecastWarehouseGroupSort(a: ForecastWarehouseTableRow, b: ForecastWarehouseTableRow) {
+  const c = a.warehouse.localeCompare(b.warehouse, 'zh-CN')
+  if (c !== 0) return c
+  const d = a.regional_manager.localeCompare(b.regional_manager, 'zh-CN')
+  if (d !== 0) return d
+  return a.smelter.localeCompare(b.smelter, 'zh-CN')
+}
+
 const forecastWarehouseTotalPages = computed(() =>
-  Math.max(1, Math.ceil(forecastWarehouseTableRows.value.length / forecastWarehousePageSize.value))
+  pivotGroupTotalPages(forecastWarehouseTableRows.value, (r) => r.warehouse, forecastWarehouseGroupSort),
 )
-const forecastWarehousePaginatedRows = computed(() => {
-  const start = (forecastWarehouseCurrentPage.value - 1) * forecastWarehousePageSize.value
-  return forecastWarehouseTableRows.value.slice(start, start + forecastWarehousePageSize.value)
-})
+const forecastWarehousePaginatedRows = computed(() =>
+  paginatePivotRowsByGroup(
+    forecastWarehouseTableRows.value,
+    forecastWarehouseCurrentPage.value,
+    (r) => r.warehouse,
+    forecastWarehouseGroupSort,
+  ),
+)
 
 const forecastWarehouseDisplayRows = computed(() => {
   const rows = forecastWarehousePaginatedRows.value
@@ -701,26 +724,13 @@ function refreshAllFilterOptionLists() {
   filterMgrSmelterOptions()
 }
 
-// ==================== 获取下拉选项（与历史查询同源：送货历史） ====================
+// ==================== 获取下拉选项（PRD 规则预测：/forecast/dimension-options） ====================
 async function fetchOptions() {
   try {
-    const response = await axios.get(ApiPaths.deliveryHistory, {
-      params: { page: 1, page_size: 200 },
-    })
-    const data = response.data as { items: any[] }
-    const items = data.items || []
-
-    allWarehouseOptions.value = [...new Set(items.map((item: any) => item.warehouse))].filter(Boolean)
-    allManagerOptions.value = [...new Set(items.map((item: any) => item.regional_manager).filter(Boolean))]
-    const histSmelters = [
-      ...new Set(
-        items
-          .map((item: any) => item.smelter)
-          .filter((s: unknown): s is string => s != null && String(s).trim() !== '')
-          .map((s: string) => String(s).trim())
-      ),
-    ]
-    allSmelterOptions.value = [...histSmelters].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+    const dims = await fetchForecastDimensionOptions()
+    allWarehouseOptions.value = dims.warehouses
+    allManagerOptions.value = dims.regional_managers
+    allSmelterOptions.value = dims.smelters
 
     refreshAllFilterOptionLists()
   } catch (error) {
@@ -1103,11 +1113,11 @@ async function fetchDetailData() {
   loading.value = true
   try {
     const base = buildForecastFilterParams()
-    const page_size = 500
+    const page_size = FORECAST_DETAILS_FETCH_PAGE_SIZE
     const all: ForecastDetailItem[] = []
     let page = 1
 
-    while (page <= 50) {
+    while (page <= 200) {
       const params: Record<string, any> = {
         ...base,
         page,
