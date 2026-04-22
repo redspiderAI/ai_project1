@@ -725,9 +725,9 @@ async function fetchOptions() {
     refreshAllFilterOptionLists()
   } catch (error) {
     console.error('获取选项失败', error)
-    allWarehouseOptions.value = ['北京仓库', '上海仓库', '广州仓库']
-    allManagerOptions.value = ['张伟', '李娜']
-    allSmelterOptions.value = ['金利', '豫光']
+    allWarehouseOptions.value = []
+    allManagerOptions.value = []
+    allSmelterOptions.value = []
     refreshAllFilterOptionLists()
   }
 }
