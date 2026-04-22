@@ -1,6 +1,6 @@
 <template>
-  <div class="emap-shell">
-    <div class="emap-toolbar card shadow-sm">
+  <div class="emap-shell emap-shell--dashboard">
+    <div class="emap-toolbar">
       <div v-if="toolbarCollapsed" class="emap-toolbar-collapsed">
         <button
           type="button"
@@ -128,6 +128,15 @@
             <input v-model="enableAutoZoomOnPointClick" type="checkbox" class="form-check-input" />
             <span>点击点位是否放大</span>
           </label>
+          <button
+            type="button"
+            class="btn btn-sm btn-outline-primary w-100 emap-tool-nearest-wh"
+            :disabled="nearestWarehouseBusy || allWarehousePoints.length === 0"
+            title="使用浏览器定位，地图飞到直线距离最近的库房"
+            @click="focusNearestWarehouseFromGeolocation"
+          >
+            {{ nearestWarehouseBusy ? '定位中…' : '定位最近仓库' }}
+          </button>
           <div v-if="lastClickedCoordText" class="emap-tool-coord text-muted">
             {{ lastClickedCoordText }}
           </div>
@@ -146,7 +155,7 @@
           type="button"
           class="btn btn-sm btn-outline-primary"
           :disabled="compareLoading"
-          @click="runComparisonForWarehouse(selectedWarehouse)"
+          @click="runComparisonForWarehouse(selectedWarehouse, { announceMissingPrereq: true })"
         >
           {{ compareLoading ? '比价中…' : '重新比价' }}
         </button>
@@ -201,24 +210,26 @@
           </div>
         </div>
         <div v-if="!comparisonPanelCollapsed" class="emap-cmp-table-wrap">
-          <table class="table table-sm table-striped align-middle mb-0">
+          <table class="table table-sm table-striped align-middle mb-0 emap-cmp-table">
             <thead>
               <tr>
-                <th>排名</th>
-                <th>冶炼厂名称</th>
-                <th>单价</th>
-                <th>总回收价</th>
-                <th>估算运费</th>
-                <th>利润</th>
+                <th class="emap-cmp-col-rank">排名</th>
+                <th class="emap-cmp-col-smelter">冶炼厂名称</th>
+                <th class="emap-cmp-col-money">单价</th>
+                <th class="emap-cmp-col-money">总回收价</th>
+                <th class="emap-cmp-col-money">估算运费</th>
+                <th class="emap-cmp-col-money">利润</th>
               </tr>
             </thead>
             <tbody>
               <tr v-if="!comparisonRanks.length">
-                <td colspan="6" class="text-center text-muted py-3">暂无比价明细（接口已返回成功）</td>
+                <td colspan="6" class="text-center text-muted py-3 emap-cmp-table-empty">
+                  暂无比价明细（接口已返回成功）
+                </td>
               </tr>
               <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
-                <td>{{ row.rank }}</td>
-                <td>{{ row.smelter }}</td>
+                <td class="emap-cmp-col-rank">{{ row.rank }}</td>
+                <td class="emap-cmp-col-smelter">{{ row.smelter }}</td>
                 <td>¥ {{ formatNum(row.unitPrice) }}</td>
                 <td>¥ {{ formatNum(row.totalRecovery) }}</td>
                 <td>¥ {{ formatNum(row.freightPerTon) }}</td>
@@ -236,8 +247,41 @@
           ><span class="emap-legend-tri"></span> 冶炼厂（接口）</span
         >
       </div>
+
+      <!-- 定位最近仓库：地图区域右上角，可关闭，10 分钟自动关闭；再次定位只更新内容 -->
+      <div v-if="geoNearestToastVisible" class="emap-geo-nearest-toast" role="status">
+        <button
+          type="button"
+          class="emap-geo-nearest-toast-close"
+          title="关闭"
+          aria-label="关闭"
+          @click="dismissGeoNearestToast"
+        >
+          ×
+        </button>
+        <div class="emap-geo-nearest-toast-body">{{ geoNearestToastMessage }}</div>
+      </div>
+
+      <!-- 仅「重新比价」触发：地图内顶部轻提示，不遮罩、不阻挡操作，10 秒自动关闭 -->
+      <div
+        v-if="comparisonPrereqToastVisible"
+        class="emap-comparison-prereq-toast"
+        role="status"
+        aria-live="polite"
+      >
+        <button
+          type="button"
+          class="emap-comparison-prereq-toast-close"
+          title="关闭"
+          aria-label="关闭"
+          @click="dismissComparisonPrereqToast"
+        >
+          ×
+        </button>
+        <p class="emap-comparison-prereq-toast-msg">{{ comparisonPrereqToastMessage }}</p>
+      </div>
     </div>
-    <div v-if="loadError" class="alert alert-warning m-3 mb-0" role="alert">{{ loadError }}</div>
+    <div v-if="loadError" class="alert emap-alert-dashboard m-3 mb-0" role="alert">{{ loadError }}</div>
 
     <!-- 与「送货量预测」页一致的趋势弹窗：折线图 + 仓库 / 大区经理 / 品类 / 冶炼厂 -->
     <div v-if="forecastModalVisible" class="emap-fc-modal" @click.self="closeForecastModal">
@@ -323,6 +367,10 @@ const GAODE_TILE =
 
 const DEFAULT_WAREHOUSE_COLOR = '#2563eb'
 const MAX_MAP_FLOW_TARGETS = 30
+/** 定位最近仓库提示在右上角停留时间 */
+const GEO_NEAREST_TOAST_MS = 10 * 60 * 1000
+/** 未确认比价条件时中央提示自动关闭时间 */
+const COMPARISON_PREREQ_TOAST_MS = 10_000
 const EMAP_TOOLBAR_COLLAPSED_KEY = 'emap.toolbar.collapsed'
 
 function readToolbarCollapsed(): boolean {
@@ -399,6 +447,7 @@ watch(toolbarCollapsed, async () => {
   await nextTick()
   mapRef.value?.invalidateSize()
 })
+
 const compareLoading = ref(false)
 const forecastLoading = ref(false)
 const compareError = ref('')
@@ -416,6 +465,11 @@ const enableCoordPick = ref(false)
 const enableAutoZoomOnPointClick = ref(false)
 const lastClickedCoordText = ref('')
 const mapToolsCollapsed = ref(false)
+const nearestWarehouseBusy = ref(false)
+const geoNearestToastVisible = ref(false)
+const geoNearestToastMessage = ref('')
+const comparisonPrereqToastVisible = ref(false)
+const comparisonPrereqToastMessage = ref('')
 const selectedWarehouse = ref<MapPoint | null>(null)
 const comparisonType = ref<'base' | 'tax3'>('base')
 /** 与品类 id 对应：默认全选、吨数默认 1（与智能比价一致可改） */
@@ -428,8 +482,13 @@ const lastComparisonSortKey = ref('')
 const allWarehousePoints = ref<MapPoint[]>([])
 const allSmelterPoints = ref<MapPoint[]>([])
 
+/** 库房 id → 标记，用于选中时把其余库房变浅 */
+const warehouseMarkerById = new Map<string, L.Marker>()
+
 let resizeObs: ResizeObserver | null = null
 let forecastTrendResizeHandler: (() => void) | null = null
+let geoNearestToastTimer: ReturnType<typeof setTimeout> | null = null
+let comparisonPrereqToastTimer: ReturnType<typeof setTimeout> | null = null
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl })
@@ -606,16 +665,157 @@ function initMap() {
   })
 }
 
-function warehouseIcon(cssColor: string): L.DivIcon {
+/** 球面大圆距离（米），用于「离我最近的库房」 */
+function greatCircleDistanceMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371000
+  const φ1 = (lat1 * Math.PI) / 180
+  const φ2 = (lat2 * Math.PI) / 180
+  const Δφ = ((lat2 - lat1) * Math.PI) / 180
+  const Δλ = ((lng2 - lng1) * Math.PI) / 180
+  const a =
+    Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ / 2) * Math.sin(Δλ / 2)
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  return R * c
+}
+
+function openMarkerPopupNear(lat: number, lng: number) {
+  const group = markerLayerRef.value
+  if (!group) return
+  const eps = 1e-5
+  let done = false
+  group.eachLayer((ly) => {
+    if (done) return
+    const m = ly as L.Marker
+    if (typeof m.getLatLng !== 'function' || typeof m.openPopup !== 'function') return
+    const p = m.getLatLng()
+    if (Math.abs(p.lat - lat) < eps && Math.abs(p.lng - lng) < eps) {
+      m.openPopup()
+      done = true
+    }
+  })
+}
+
+function dismissGeoNearestToast() {
+  if (geoNearestToastTimer != null) {
+    clearTimeout(geoNearestToastTimer)
+    geoNearestToastTimer = null
+  }
+  geoNearestToastVisible.value = false
+}
+
+/** 同一条右上角提示：更新文案并重新计时 10 分钟 */
+function showOrUpdateGeoNearestToast(message: string) {
+  if (geoNearestToastTimer != null) {
+    clearTimeout(geoNearestToastTimer)
+    geoNearestToastTimer = null
+  }
+  geoNearestToastMessage.value = message
+  geoNearestToastVisible.value = true
+  geoNearestToastTimer = setTimeout(() => {
+    dismissGeoNearestToast()
+  }, GEO_NEAREST_TOAST_MS)
+}
+
+function dismissComparisonPrereqToast() {
+  if (comparisonPrereqToastTimer != null) {
+    clearTimeout(comparisonPrereqToastTimer)
+    comparisonPrereqToastTimer = null
+  }
+  comparisonPrereqToastVisible.value = false
+}
+
+function showComparisonPrereqToast(message: string) {
+  if (comparisonPrereqToastTimer != null) {
+    clearTimeout(comparisonPrereqToastTimer)
+    comparisonPrereqToastTimer = null
+  }
+  comparisonPrereqToastMessage.value = message
+  comparisonPrereqToastVisible.value = true
+  comparisonPrereqToastTimer = setTimeout(() => {
+    dismissComparisonPrereqToast()
+  }, COMPARISON_PREREQ_TOAST_MS)
+}
+
+function focusNearestWarehouseFromGeolocation() {
+  const map = mapRef.value
+  const list = allWarehousePoints.value
+  if (!map) {
+    window.alert('地图尚未就绪')
+    return
+  }
+  if (!list.length) {
+    window.alert('当前没有库房数据，请先加载地图')
+    return
+  }
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    window.alert('当前环境不支持浏览器定位')
+    return
+  }
+  nearestWarehouseBusy.value = true
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      nearestWarehouseBusy.value = false
+      const uLat = pos.coords.latitude
+      const uLng = pos.coords.longitude
+      let best: MapPoint | null = null
+      let bestM = Infinity
+      for (const p of list) {
+        const m = greatCircleDistanceMeters(uLat, uLng, p.lat, p.lng)
+        if (m < bestM) {
+          bestM = m
+          best = p
+        }
+      }
+      if (!best) return
+      const zoom = Math.max(map.getZoom(), 12)
+      map.setView([best.lat, best.lng], zoom, { animate: true })
+      openMarkerPopupNear(best.lat, best.lng)
+      showOrUpdateGeoNearestToast(`已定位到最近仓库：${best.title}`)
+    },
+    (err) => {
+      nearestWarehouseBusy.value = false
+      const msg =
+        err.code === 1
+          ? '已拒绝定位权限，请在浏览器设置中允许本站获取位置'
+          : err.code === 2
+            ? '暂时无法获取位置'
+            : err.code === 3
+              ? '定位超时，请重试'
+              : `定位失败：${err.message || '未知错误'}`
+      window.alert(msg)
+    },
+    { enableHighAccuracy: true, maximumAge: 60_000, timeout: 20_000 },
+  )
+}
+
+function warehouseIcon(cssColor: string, dimmed = false): L.DivIcon {
   const bg = safeCssColor(cssColor, DEFAULT_WAREHOUSE_COLOR)
+  const dimClass = dimmed ? ' emap-pin-inner--dimmed' : ''
   return L.divIcon({
     className: 'emap-marker emap-marker--warehouse',
-    html: `<div class="emap-pin-inner" style="background:${bg};"></div>`,
+    html: `<div class="emap-pin-inner${dimClass}" style="background:${bg};"></div>`,
     iconSize: [26, 26],
     iconAnchor: [13, 26],
     popupAnchor: [0, -24],
   })
 }
+
+function refreshWarehouseMarkerDimming() {
+  const sel = selectedWarehouse.value
+  const selId = sel?.kind === 'warehouse' ? sel.id : null
+  const validSelId = selId && warehouseMarkerById.has(selId) ? selId : null
+  for (const p of allWarehousePoints.value) {
+    const m = warehouseMarkerById.get(p.id)
+    if (!m) continue
+    const dimmed = Boolean(validSelId && validSelId !== p.id)
+    m.setIcon(warehouseIcon(p.pinColor ?? DEFAULT_WAREHOUSE_COLOR, dimmed))
+  }
+}
+
+watch(selectedWarehouse, () => {
+  refreshWarehouseMarkerDimming()
+})
 
 function smelterIcon(): L.DivIcon {
   return L.divIcon({
@@ -633,12 +833,13 @@ function renderMarkers(points: MapPoint[]) {
   if (!map || !markerLayer) return
   markerLayer.clearLayers()
   clearComparisonOverlays()
+  warehouseMarkerById.clear()
 
   allWarehousePoints.value = points.filter((p) => p.kind === 'warehouse')
   allSmelterPoints.value = points.filter((p) => p.kind === 'smelter')
   for (const p of points) {
     const icon =
-      p.kind === 'warehouse' ? warehouseIcon(p.pinColor ?? DEFAULT_WAREHOUSE_COLOR) : smelterIcon()
+      p.kind === 'warehouse' ? warehouseIcon(p.pinColor ?? DEFAULT_WAREHOUSE_COLOR, false) : smelterIcon()
     const marker = L.marker([p.lat, p.lng], { icon })
     const popupHtml =
       p.kind === 'warehouse' ? warehousePopupHtml(p) : `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="text-muted small">${escapeHtml(p.subtitle)}</span></div>`
@@ -662,7 +863,10 @@ function renderMarkers(points: MapPoint[]) {
       })
     }
     marker.addTo(markerLayer)
+    if (p.kind === 'warehouse') warehouseMarkerById.set(p.id, marker)
   }
+
+  refreshWarehouseMarkerDimming()
 
   const bounds = L.latLngBounds([])
   for (const p of points) bounds.extend([p.lat, p.lng])
@@ -1168,7 +1372,21 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
   }
 }
 
-async function runComparisonForWarehouse(warehouse: MapPoint) {
+type RunComparisonOptions = {
+  /** 仅「重新比价」按钮为 true；地图点仓库缺条件时静默，不挡操作 */
+  announceMissingPrereq?: boolean
+}
+
+async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunComparisonOptions) {
+  if (!confirmedCategoryIds.value.length || confirmedTotalTons.value <= 0) {
+    if (options?.announceMissingPrereq) {
+      showComparisonPrereqToast(
+        '请先在上方「回收品类」中勾选品类、填写吨数（至少一项大于 0），并点击「确定」后再进行比价。',
+      )
+    }
+    return
+  }
+
   compareLoading.value = true
   compareError.value = ''
   try {
@@ -1178,10 +1396,6 @@ async function runComparisonForWarehouse(warehouse: MapPoint) {
       .map((s) => pickNumber(s.raw, ['冶炼厂id', 'factory_id', 'smelter_id', 'id']))
       .filter((x): x is number => x != null)
     if (!smelterIds.length) throw new Error('暂无可比价的冶炼厂')
-
-    if (!confirmedCategoryIds.value.length || confirmedTotalTons.value <= 0) {
-      throw new Error('请先在上方选择品类吨数后点击“确定”，再点击仓库比价')
-    }
 
     const body = buildSmartComparisonBody(
       whId,
@@ -1317,10 +1531,10 @@ function drawForecastTrendChart() {
   const maxV = Math.max(...values, 0)
   const maxY = maxV <= 0 ? 1 : maxV * 1.08
 
-  ctx.fillStyle = '#ffffff'
+  ctx.fillStyle = '#0c1a2e'
   ctx.fillRect(0, 0, width, height)
 
-  ctx.strokeStyle = '#d1d5db'
+  ctx.strokeStyle = 'rgba(56, 189, 248, 0.35)'
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.moveTo(margin.l, margin.t)
@@ -1330,11 +1544,11 @@ function drawForecastTrendChart() {
 
   const ySteps = 5
   ctx.font = '11px system-ui, sans-serif'
-  ctx.fillStyle = '#64748b'
+  ctx.fillStyle = '#94a3b8'
   for (let i = 0; i <= ySteps; i++) {
     const y = margin.t + H - (i / ySteps) * H
     const val = (i / ySteps) * maxY
-    ctx.strokeStyle = '#f1f5f9'
+    ctx.strokeStyle = 'rgba(34, 211, 238, 0.08)'
     ctx.beginPath()
     ctx.moveTo(margin.l, y)
     ctx.lineTo(margin.l + W, y)
@@ -1344,8 +1558,10 @@ function drawForecastTrendChart() {
 
   const xStep = n <= 1 ? W / 2 : W / (n - 1)
 
-  ctx.strokeStyle = '#1476db'
+  ctx.strokeStyle = '#22d3ee'
   ctx.lineWidth = 2
+  ctx.shadowColor = 'rgba(34, 211, 238, 0.45)'
+  ctx.shadowBlur = 8
   ctx.beginPath()
   values.forEach((v, i) => {
     const x = margin.l + i * xStep
@@ -1354,8 +1570,9 @@ function drawForecastTrendChart() {
     else ctx.lineTo(x, y)
   })
   ctx.stroke()
+  ctx.shadowBlur = 0
 
-  ctx.fillStyle = '#1476db'
+  ctx.fillStyle = '#38bdf8'
   values.forEach((v, i) => {
     const x = margin.l + i * xStep
     const y = margin.t + H - (v / maxY) * H
@@ -1366,7 +1583,7 @@ function drawForecastTrendChart() {
 
   const maxLabs = Math.max(2, Math.floor(W / 56))
   const labStep = Math.max(1, Math.ceil(n / maxLabs))
-  ctx.fillStyle = '#64748b'
+  ctx.fillStyle = '#94a3b8'
   dates.forEach((d, i) => {
     if (i % labStep !== 0 && i !== n - 1) return
     const x = margin.l + i * xStep
@@ -1377,12 +1594,12 @@ function drawForecastTrendChart() {
   ctx.save()
   ctx.translate(14, margin.t + H / 2)
   ctx.rotate(-Math.PI / 2)
-  ctx.fillStyle = '#475569'
+  ctx.fillStyle = '#7dd3fc'
   ctx.font = '12px system-ui, sans-serif'
   ctx.fillText('预测重量(吨)', -36, 0)
   ctx.restore()
 
-  ctx.fillStyle = '#475569'
+  ctx.fillStyle = '#7dd3fc'
   ctx.font = '12px system-ui, sans-serif'
   ctx.fillText('预测日期', margin.l + W / 2 - 28, height - 8)
 }
@@ -1577,6 +1794,8 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   cancelFlowOverlayAnimations()
+  dismissGeoNearestToast()
+  dismissComparisonPrereqToast()
   if (forecastTrendResizeHandler) {
     window.removeEventListener('resize', forecastTrendResizeHandler)
     forecastTrendResizeHandler = null
@@ -1585,6 +1804,7 @@ onBeforeUnmount(() => {
   resizeObs = null
   mapRef.value?.remove()
   mapRef.value = null
+  warehouseMarkerById.clear()
   markerLayerRef.value = null
   flowLayerRef.value = null
   topTipLayerRef.value = null
@@ -1598,20 +1818,29 @@ onBeforeUnmount(() => {
   flex-direction: column;
   height: calc(100vh - 72px);
   min-height: 420px;
+}
+
+.emap-shell--dashboard {
+  color: #e2e8f0;
   background:
-    radial-gradient(circle at 12% 14%, rgba(59, 130, 246, 0.14), transparent 28%),
-    radial-gradient(circle at 86% 12%, rgba(20, 184, 166, 0.12), transparent 26%),
-    linear-gradient(180deg, #f6f8fc 0%, #eef2f9 100%);
+    linear-gradient(rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(56, 189, 248, 0.04) 1px, transparent 1px),
+    radial-gradient(ellipse 120% 70% at 50% -15%, rgba(14, 165, 233, 0.14), transparent 55%),
+    radial-gradient(ellipse 60% 50% at 100% 80%, rgba(59, 130, 246, 0.08), transparent 45%),
+    linear-gradient(180deg, #050b14 0%, #0a1628 42%, #060d18 100%);
+  background-size: 28px 28px, 28px 28px, auto, auto, auto;
 }
 
 .emap-toolbar {
   margin: 12px 16px 0;
   padding: 14px 16px;
-  border: 1px solid rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(34, 211, 238, 0.28);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.76);
-  backdrop-filter: blur(10px);
-  box-shadow: 0 10px 26px rgba(15, 23, 42, 0.1);
+  background: rgba(6, 18, 40, 0.82);
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 0 0 1px rgba(56, 189, 248, 0.06) inset,
+    0 12px 32px rgba(0, 0, 0, 0.45);
 }
 
 .emap-toolbar-collapsed {
@@ -1678,7 +1907,7 @@ onBeforeUnmount(() => {
 .emap-field-label {
   font-size: 11px;
   font-weight: 600;
-  color: #475569;
+  color: #7dd3fc;
   margin: 0;
   letter-spacing: 0.2px;
 }
@@ -1701,7 +1930,7 @@ onBeforeUnmount(() => {
 }
 
 .emap-cat-toolbar-err {
-  color: #b91c1c;
+  color: #fca5a5;
 }
 
 .emap-cat-toolbar-list {
@@ -1726,22 +1955,32 @@ onBeforeUnmount(() => {
   margin: 0;
   padding: 5px 9px;
   border-radius: 999px;
-  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  border: 1px solid #dbe7fb;
+  background: linear-gradient(180deg, rgba(15, 40, 72, 0.95) 0%, rgba(8, 26, 52, 0.98) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.35);
   font-size: 12px;
   cursor: pointer;
   transition: all 0.2s ease;
+  color: #e2e8f0;
 }
 
 .emap-cat-pill:hover {
-  border-color: #93c5fd;
-  box-shadow: 0 4px 10px rgba(37, 99, 235, 0.14);
+  border-color: #22d3ee;
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.25);
   transform: translateY(-1px);
 }
 
 .emap-cat-pill .form-check-input {
   margin: 0;
   flex-shrink: 0;
+}
+
+.emap-shell--dashboard .emap-cat-pill .emap-cat-name {
+  color: #f1f5f9;
+}
+
+.emap-shell--dashboard .emap-cat-pill .form-check-input {
+  border-width: 2px;
+  border-color: rgba(125, 211, 252, 0.75);
 }
 
 .emap-cat-name {
@@ -1774,13 +2013,24 @@ onBeforeUnmount(() => {
   line-height: 1.45;
 }
 
+/* 大屏下说明文字：接近参考图的白/浅灰主字，避免 text-muted 过暗 */
+.emap-shell--dashboard .emap-toolbar-hint {
+  color: #e2e8f0 !important;
+}
+
+.emap-shell--dashboard .emap-toolbar-hint strong {
+  color: #f8fafc;
+  font-weight: 700;
+}
+
 .emap-title {
   font-weight: 700;
   font-size: 16px;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #0f172a;
+  color: #f1f5f9;
+  text-shadow: 0 0 24px rgba(34, 211, 238, 0.35);
 }
 
 .emap-map-wrap {
@@ -1790,14 +2040,41 @@ onBeforeUnmount(() => {
   margin: 12px 16px 16px;
   border-radius: 14px;
   overflow: hidden;
-  border: 1px solid rgba(255, 255, 255, 0.8);
-  box-shadow: 0 14px 36px rgba(15, 23, 42, 0.14);
+  border: 1px solid rgba(34, 211, 238, 0.32);
+  box-shadow:
+    0 0 0 1px rgba(56, 189, 248, 0.08) inset,
+    0 16px 48px rgba(0, 0, 0, 0.5);
+}
+
+.emap-map-wrap::before,
+.emap-map-wrap::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-color: #22d3ee;
+  border-style: solid;
+  z-index: 5;
+  pointer-events: none;
+  opacity: 0.85;
+}
+
+.emap-map-wrap::before {
+  top: 10px;
+  left: 10px;
+  border-width: 2px 0 0 2px;
+}
+
+.emap-map-wrap::after {
+  bottom: 10px;
+  right: 10px;
+  border-width: 0 2px 2px 0;
 }
 
 .emap-map {
   width: 100%;
   height: 100%;
-  background: #dfe7ef;
+  background: #0a1628;
 }
 
 .emap-floating-actions {
@@ -1808,12 +2085,12 @@ onBeforeUnmount(() => {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(10px);
+  background: rgba(6, 18, 40, 0.88);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  backdrop-filter: blur(12px);
   border-radius: 12px;
   padding: 9px;
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
 }
 
 .emap-map-tools {
@@ -1823,14 +2100,16 @@ onBeforeUnmount(() => {
   transform: translateY(-50%);
   z-index: 1000;
   min-width: 190px;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.9);
+  max-width: 220px;
+  background: rgba(6, 18, 40, 0.9);
+  border: 1px solid rgba(34, 211, 238, 0.28);
   border-radius: 12px;
   padding: 8px 10px;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, 0.45);
   font-size: 12px;
   overflow: visible;
+  color: #cbd5e1;
 }
 
 .emap-map-tools-head {
@@ -1843,7 +2122,7 @@ onBeforeUnmount(() => {
 
 .emap-map-tools-title {
   font-weight: 700;
-  color: #0f172a;
+  color: #f1f5f9;
 }
 
 .emap-map-tools-tab {
@@ -1852,14 +2131,14 @@ onBeforeUnmount(() => {
   right: 0;
   transform: translateY(-50%);
   z-index: 1000;
-  border: 1px solid #d1d5db;
+  border: 1px solid rgba(34, 211, 238, 0.35);
   border-right: none;
-  background: rgba(255, 255, 255, 0.88);
-  color: #0f172a;
+  background: rgba(6, 18, 40, 0.92);
+  color: #e2e8f0;
   padding: 10px 10px;
   border-radius: 8px 0 0 8px;
-  backdrop-filter: blur(10px);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.4);
   writing-mode: vertical-rl;
   text-orientation: mixed;
   font-size: 12px;
@@ -1867,7 +2146,7 @@ onBeforeUnmount(() => {
 }
 
 .emap-map-tools-tab:hover {
-  background: #f8fafc;
+  background: rgba(12, 36, 68, 0.95);
 }
 
 .emap-tools-slide-enter-active,
@@ -1893,7 +2172,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   margin: 0 0 6px;
-  color: #374151;
+  color: #cbd5e1;
 }
 
 .emap-tool-check .form-check-input {
@@ -1906,6 +2185,99 @@ onBeforeUnmount(() => {
   word-break: break-all;
 }
 
+.emap-geo-nearest-toast {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 1100;
+  max-width: min(360px, calc(100% - 28px));
+  padding: 10px 40px 10px 12px;
+  background: rgba(6, 18, 40, 0.96);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 10px;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+  line-height: 1.45;
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
+.emap-geo-nearest-toast-close {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emap-geo-nearest-toast-close:hover {
+  color: #f1f5f9;
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.emap-geo-nearest-toast-body {
+  margin: 0;
+}
+
+/* 非模态：仅占地图顶部一条，不挡点击 */
+.emap-comparison-prereq-toast {
+  position: absolute;
+  left: 50%;
+  top: 12px;
+  transform: translateX(-50%);
+  z-index: 1150;
+  max-width: min(300px, calc(100% - 24px));
+  padding: 7px 34px 7px 10px;
+  background: rgba(6, 18, 40, 0.94);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+}
+
+.emap-comparison-prereq-toast-close {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.emap-comparison-prereq-toast-close:hover {
+  color: #f1f5f9;
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.emap-comparison-prereq-toast-msg {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #e2e8f0;
+  word-break: break-word;
+}
+
 .emap-map-tools-arrow {
   position: absolute;
   top: 50%;
@@ -1913,21 +2285,21 @@ onBeforeUnmount(() => {
   transform: translateY(-50%);
   width: 20px;
   height: 44px;
-  border: 1px solid #d1d5db;
+  border: 1px solid rgba(34, 211, 238, 0.35);
   border-left: none;
   border-radius: 0 8px 8px 0;
-  background: rgba(255, 255, 255, 0.96);
-  color: #1f2937;
+  background: rgba(8, 26, 52, 0.96);
+  color: #e2e8f0;
   font-size: 11px;
   line-height: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.12);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
 .emap-map-tools-arrow:hover {
-  background: #f8fafc;
+  background: rgba(12, 36, 68, 0.98);
 }
 
 .emap-cmp-panel {
@@ -1937,13 +2309,14 @@ onBeforeUnmount(() => {
   z-index: 1000;
   width: min(560px, calc(100% - 24px));
   max-height: calc(100% - 24px);
-  background: rgba(255, 255, 255, 0.84);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(12px);
+  background: rgba(6, 18, 40, 0.92);
+  border: 1px solid rgba(34, 211, 238, 0.3);
+  backdrop-filter: blur(14px);
   border-radius: 14px;
-  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
   padding: 10px 12px;
   overflow: auto;
+  color: #e2e8f0;
 }
 
 .emap-cmp-panel--collapsed {
@@ -1968,7 +2341,12 @@ onBeforeUnmount(() => {
   margin: 0;
   font-size: 18px;
   font-weight: 700;
-  color: #111827;
+  color: #f8fafc;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .emap-cmp-panel-head-actions {
@@ -1978,10 +2356,10 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-panel-toggle {
-  border: 1px solid #d1d5db;
+  border: 1px solid rgba(34, 211, 238, 0.35);
   border-radius: 6px;
-  background: #f8fafc;
-  color: #334155;
+  background: rgba(8, 26, 52, 0.9);
+  color: #cbd5e1;
   font-size: 12px;
   line-height: 1;
   padding: 6px 8px;
@@ -1989,13 +2367,14 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-panel-toggle:hover {
-  background: #f1f5f9;
+  background: rgba(12, 36, 68, 0.95);
+  border-color: #22d3ee;
 }
 
 .emap-cmp-panel-close {
   border: none;
   background: transparent;
-  color: #6b7280;
+  color: #94a3b8;
   font-size: 26px;
   line-height: 1;
   padding: 0 4px;
@@ -2004,35 +2383,81 @@ onBeforeUnmount(() => {
 
 .emap-cmp-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 10px;
 }
 
 .emap-cmp-summary-card {
-  background: linear-gradient(180deg, #ffffff 0%, #f7fbff 100%);
-  border: 1px solid #dbe7fb;
-  border-radius: 10px;
-  padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(12, 36, 68, 0.95) 0%, rgba(6, 22, 48, 0.98) 100%);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 8px;
+  padding: 6px 8px;
+  min-width: 0;
 }
 
 .emap-cmp-summary-label {
-  font-size: 12px;
-  color: #64748b;
-  margin-bottom: 4px;
+  font-size: 10px;
+  line-height: 1.25;
+  color: #7dd3fc;
+  margin-bottom: 2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .emap-cmp-summary-value {
-  font-size: 14px;
+  font-size: 12px;
   font-weight: 600;
-  color: #0f172a;
+  color: #f1f5f9;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .emap-cmp-table-wrap {
   max-height: 360px;
-  overflow: auto;
-  border: 1px solid #e5e7eb;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid rgba(34, 211, 238, 0.22);
   border-radius: 8px;
+}
+
+/* 固定列宽：厂名省略，四列金额完整单行；容器不横向滚动 */
+.emap-cmp-table {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 11px;
+}
+
+.emap-cmp-table th,
+.emap-cmp-table td {
+  vertical-align: middle;
+  padding-left: 6px;
+  padding-right: 6px;
+}
+
+.emap-cmp-table .emap-cmp-col-rank {
+  width: 2.75rem;
+  white-space: nowrap;
+}
+
+.emap-cmp-table .emap-cmp-col-smelter {
+  width: 26%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emap-cmp-table .emap-cmp-col-money {
+  width: 18.5%;
+  white-space: nowrap;
+}
+
+.emap-cmp-table td.emap-cmp-table-empty {
+  white-space: normal;
+  max-width: none;
 }
 
 .emap-side-card {
@@ -2042,17 +2467,20 @@ onBeforeUnmount(() => {
   z-index: 1000;
   width: 340px;
   max-width: calc(100% - 24px);
-  background: rgba(255, 255, 255, 0.96);
+  background: rgba(6, 18, 40, 0.92);
+  border: 1px solid rgba(34, 211, 238, 0.28);
   border-radius: 10px;
   padding: 10px 12px;
-  box-shadow: 0 6px 18px rgba(15, 23, 42, 0.16);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   font-size: 12px;
+  color: #e2e8f0;
 }
 
 .emap-side-title {
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 6px;
+  color: #f1f5f9;
 }
 
 .emap-side-line {
@@ -2085,27 +2513,30 @@ onBeforeUnmount(() => {
 
 .emap-side-error {
   margin-top: 8px;
-  color: #b91c1c;
+  color: #fca5a5;
 }
 
 .emap-fc-modal {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(2, 8, 18, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
   z-index: 2000;
+  backdrop-filter: blur(4px);
 }
 
 .emap-fc-modal-content {
-  background: #fff;
-  border-radius: 8px;
+  background: linear-gradient(180deg, #0c1a30 0%, #081424 100%);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 12px;
   width: min(720px, 96vw);
   max-width: 96%;
   max-height: 90vh;
   overflow: auto;
-  box-shadow: 0 12px 40px rgba(15, 23, 42, 0.2);
+  box-shadow: 0 20px 56px rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
 }
 
 .emap-fc-modal-header {
@@ -2113,13 +2544,13 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: 16px 20px;
-  border-bottom: 1px solid #e5e9f2;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.2);
 }
 
 .emap-fc-modal-header h3 {
   font-size: 16px;
   font-weight: 600;
-  color: #1f2d3d;
+  color: #f1f5f9;
   margin: 0;
 }
 
@@ -2129,12 +2560,12 @@ onBeforeUnmount(() => {
   font-size: 24px;
   line-height: 1;
   cursor: pointer;
-  color: #909399;
+  color: #94a3b8;
   padding: 0 4px;
 }
 
 .emap-fc-close-btn:hover {
-  color: #606266;
+  color: #e2e8f0;
 }
 
 .emap-fc-modal-body {
@@ -2157,10 +2588,12 @@ onBeforeUnmount(() => {
   padding: 48px 16px;
   text-align: center;
   font-size: 14px;
+  color: #94a3b8;
 }
 
 .emap-fc-chart-meta {
-  background: #f8fafc;
+  background: rgba(8, 26, 52, 0.75);
+  border: 1px solid rgba(34, 211, 238, 0.2);
   border-radius: 8px;
   padding: 14px 16px;
   margin-bottom: 12px;
@@ -2172,12 +2605,12 @@ onBeforeUnmount(() => {
 .emap-fc-chart-meta p {
   margin: 0;
   font-size: 13px;
-  color: #334155;
+  color: #cbd5e1;
   line-height: 1.5;
 }
 
 .emap-fc-chart-meta strong {
-  color: #0f172a;
+  color: #7dd3fc;
   margin-right: 6px;
 }
 
@@ -2189,7 +2622,7 @@ onBeforeUnmount(() => {
 
 .emap-fc-modal-footer {
   padding: 16px 20px;
-  border-top: 1px solid #e5e9f2;
+  border-top: 1px solid rgba(34, 211, 238, 0.2);
   text-align: right;
 }
 
@@ -2198,16 +2631,17 @@ onBeforeUnmount(() => {
   right: 12px;
   bottom: 12px;
   z-index: 1000;
-  background: rgba(255, 255, 255, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(8px);
+  background: rgba(6, 18, 40, 0.9);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  backdrop-filter: blur(12px);
   border-radius: 10px;
   padding: 8px 12px;
   font-size: 12px;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.14);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.45);
+  color: #e2e8f0;
 }
 
 .emap-legend-item {
@@ -2221,12 +2655,12 @@ onBeforeUnmount(() => {
   height: 12px;
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
-  border: 1px solid #fff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  box-shadow: 0 0 8px rgba(37, 99, 235, 0.45);
 }
 
 .emap-legend-dot--wh {
-  background: #2563eb;
+  background: #38bdf8;
 }
 
 .emap-legend-tri {
@@ -2234,8 +2668,151 @@ onBeforeUnmount(() => {
   height: 0;
   border-left: 7px solid transparent;
   border-right: 7px solid transparent;
-  border-bottom: 12px solid #c2410c;
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.2));
+  border-bottom: 12px solid #fb923c;
+  filter: drop-shadow(0 0 6px rgba(251, 146, 60, 0.55));
+}
+
+.emap-alert-dashboard {
+  background: rgba(120, 53, 15, 0.35);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fde68a;
+}
+
+.emap-shell--dashboard :deep(.form-select),
+.emap-shell--dashboard :deep(.form-control) {
+  background-color: rgba(8, 22, 44, 0.92);
+  border-color: rgba(56, 189, 248, 0.35);
+  color: #e2e8f0;
+}
+
+.emap-shell--dashboard :deep(.form-select:focus),
+.emap-shell--dashboard :deep(.form-control:focus) {
+  border-color: #22d3ee;
+  box-shadow: 0 0 0 0.2rem rgba(34, 211, 238, 0.2);
+}
+
+.emap-shell--dashboard :deep(.table) {
+  --bs-table-bg: transparent;
+  --bs-table-color: #f1f5f9;
+  /* BS 5.3 斑马纹行单独用 striped-color，不设则仍为深色字 */
+  --bs-table-striped-color: #f1f5f9;
+  --bs-table-striped-bg: rgba(34, 211, 238, 0.08);
+  --bs-table-active-color: #f8fafc;
+  --bs-table-active-bg: rgba(34, 211, 238, 0.14);
+  --bs-table-hover-color: #f8fafc;
+  --bs-table-hover-bg: rgba(34, 211, 238, 0.12);
+  border-color: rgba(34, 211, 238, 0.2);
+  color: #f1f5f9;
+}
+
+.emap-shell--dashboard :deep(.table thead th) {
+  color: #f8fafc;
+  font-weight: 600;
+}
+
+.emap-shell--dashboard :deep(.table tbody td) {
+  color: #f1f5f9;
+}
+
+.emap-shell--dashboard :deep(.table tbody td.text-success) {
+  color: #4ade80 !important;
+}
+
+.emap-shell--dashboard :deep(.table > :not(caption) > * > *) {
+  border-bottom-color: rgba(34, 211, 238, 0.15);
+}
+
+/* 全局说明灰字：大屏上提亮（含品类行小字、坐标、空状态等） */
+.emap-shell--dashboard :deep(.text-muted) {
+  color: #a8c4dc !important;
+}
+
+.emap-shell--dashboard :deep(.btn-primary) {
+  background: linear-gradient(180deg, #0891b2 0%, #0e7490 100%);
+  border-color: rgba(34, 211, 238, 0.55);
+  color: #f0fdfa;
+  box-shadow: 0 0 12px rgba(34, 211, 238, 0.25);
+}
+
+.emap-shell--dashboard :deep(.btn-primary:hover) {
+  background: linear-gradient(180deg, #06b6d4 0%, #0891b2 100%);
+  border-color: #22d3ee;
+}
+
+.emap-shell--dashboard :deep(.btn-secondary) {
+  background: rgba(30, 41, 59, 0.9);
+  border-color: rgba(148, 163, 184, 0.45);
+  color: #e2e8f0;
+}
+
+.emap-shell--dashboard :deep(.btn-secondary:hover) {
+  background: rgba(51, 65, 85, 0.95);
+  border-color: #94a3b8;
+  color: #f8fafc;
+}
+
+.emap-shell--dashboard :deep(.btn-success) {
+  background: linear-gradient(180deg, #059669 0%, #047857 100%);
+  border-color: rgba(52, 211, 153, 0.5);
+  color: #ecfdf5;
+}
+
+.emap-shell--dashboard :deep(.btn-outline-secondary) {
+  color: #cbd5e1;
+  border-color: rgba(148, 163, 184, 0.45);
+  background: rgba(15, 23, 42, 0.4);
+}
+
+.emap-shell--dashboard :deep(.btn-outline-secondary:hover) {
+  background: rgba(51, 65, 85, 0.75);
+  border-color: #94a3b8;
+  color: #f8fafc;
+}
+
+.emap-shell--dashboard :deep(.btn-outline-primary) {
+  color: #7dd3fc;
+  border-color: rgba(56, 189, 248, 0.55);
+  background: rgba(8, 26, 52, 0.5);
+}
+
+.emap-shell--dashboard :deep(.btn-outline-primary:hover) {
+  background: rgba(14, 116, 144, 0.45);
+  border-color: #22d3ee;
+  color: #f0f9ff;
+}
+
+.emap-shell--dashboard :deep(.btn-outline-success) {
+  color: #6ee7b7;
+  border-color: rgba(52, 211, 153, 0.5);
+  background: rgba(6, 40, 32, 0.35);
+}
+
+.emap-shell--dashboard :deep(.btn-outline-success:hover) {
+  background: rgba(6, 78, 59, 0.55);
+  border-color: #34d399;
+  color: #ecfdf5;
+}
+
+.emap-shell--dashboard :deep(.btn-outline-dark) {
+  color: #e2e8f0;
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.emap-shell--dashboard :deep(.btn-outline-dark:hover) {
+  background: rgba(51, 65, 85, 0.65);
+  border-color: #cbd5e1;
+  color: #fff;
+}
+
+.emap-shell--dashboard :deep(.form-check-input) {
+  background-color: rgba(8, 22, 44, 0.85);
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
+.emap-shell--dashboard :deep(.form-check-input:checked) {
+  background-color: #0891b2;
+  border-color: #22d3ee;
 }
 
 </style>
@@ -2253,6 +2830,13 @@ onBeforeUnmount(() => {
   border: 2px solid #fff;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
   margin: 2px;
+}
+
+.emap-marker--warehouse .emap-pin-inner--dimmed {
+  opacity: 0.48;
+  filter: saturate(0.52) brightness(1.18);
+  border-color: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
 .emap-marker--smelter .emap-smelter-tri {
   width: 0;
@@ -2275,7 +2859,7 @@ onBeforeUnmount(() => {
 }
 
 .emap-popup--warehouse .emap-popup-type-label {
-  color: #6b7280;
+  color: #7dd3fc;
   font-weight: 500;
 }
 
@@ -2294,6 +2878,36 @@ onBeforeUnmount(() => {
   font-size: 11px;
   line-height: 1.35;
   padding: 6px 8px;
+}
+
+/* 大屏主题：压暗瓦片、与面板色调统一（仅 .emap-shell--dashboard 内） */
+.emap-shell--dashboard .leaflet-container {
+  background: #0a1628;
+}
+.emap-shell--dashboard .leaflet-tile-pane {
+  filter: brightness(0.58) contrast(1.08) saturate(0.72) hue-rotate(-6deg);
+}
+
+.emap-shell--dashboard .leaflet-popup-content-wrapper {
+  background: rgba(6, 18, 40, 0.96);
+  color: #e2e8f0;
+  border: 1px solid rgba(34, 211, 238, 0.32);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+
+.emap-shell--dashboard .leaflet-popup-tip {
+  background: rgba(6, 18, 40, 0.96);
+  border: 1px solid rgba(34, 211, 238, 0.25);
+  box-shadow: none;
+}
+
+.emap-shell--dashboard .leaflet-popup-content .text-muted {
+  color: #94a3b8 !important;
+}
+
+.emap-shell--dashboard .leaflet-popup-content a {
+  color: #7dd3fc;
 }
 </style>
 
