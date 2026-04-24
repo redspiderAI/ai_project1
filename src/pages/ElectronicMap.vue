@@ -401,6 +401,8 @@ const mapRef = shallowRef<L.Map | null>(null)
 const markerLayerRef = shallowRef<L.LayerGroup | null>(null)
 const flowLayerRef = shallowRef<L.LayerGroup | null>(null)
 const topTipLayerRef = shallowRef<L.LayerGroup | null>(null)
+/** 比价流向折线统一走 SVG，虚线 dash 动画与双层描边更稳定 */
+const flowPathSvgRendererRef = shallowRef<L.SVG | null>(null)
 const loading = ref(false)
 const loadError = ref('')
 const categories = ref<TlCategoryRow[]>([])
@@ -542,6 +544,7 @@ let forecastTrendResizeHandler: (() => void) | null = null
 let geoNearestToastTimer: ReturnType<typeof setTimeout> | null = null
 let comparisonPrereqToastTimer: ReturnType<typeof setTimeout> | null = null
 const flowAnimTimerIds: number[] = []
+const flowOverlayCleanups: Array<() => void> = []
 
 delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
 L.Icon.Default.mergeOptions({ iconRetinaUrl, iconUrl, shadowUrl })
@@ -701,6 +704,7 @@ function initMap() {
   markerLayerRef.value = markerLayer
   flowLayerRef.value = flowLayer
   topTipLayerRef.value = topTipLayer
+  flowPathSvgRendererRef.value = L.svg({ padding: 0.5 })
 
   if (mapWrapRef.value) {
     resizeObs = new ResizeObserver(() => {
@@ -965,6 +969,7 @@ function formatNum(n: number): string {
 }
 
 function clearComparisonOverlays() {
+  cancelFlowOverlayAnimations()
   stopFlowAnimations()
   flowLayerRef.value?.clearLayers()
   topTipLayerRef.value?.clearLayers()
@@ -979,6 +984,17 @@ function stopFlowAnimations() {
     const id = flowAnimTimerIds.pop()
     if (id != null) window.clearInterval(id)
   }
+}
+
+function cancelFlowOverlayAnimations() {
+  for (const fn of flowOverlayCleanups) {
+    try {
+      fn()
+    } catch {
+      /* noop */
+    }
+  }
+  flowOverlayCleanups.length = 0
 }
 
 function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
@@ -1045,14 +1061,119 @@ function bearingDeg(lat1: number, lng1: number, lat2: number, lng2: number): num
   return (Math.atan2(y, x) * 180) / Math.PI
 }
 
-function pointAlongFrac(
+/** 二次贝塞尔曲线点列（控制点垂直于弦，略鼓起的弧线） */
+function quadraticBezierLatLng(
   lat1: number,
   lng1: number,
   lat2: number,
   lng2: number,
-  t: number,
-): [number, number] {
-  return [lat1 + (lat2 - lat1) * t, lng1 + (lng2 - lng1) * t]
+  segments: number,
+  bend: number,
+): L.LatLngTuple[] {
+  const midLat = (lat1 + lat2) / 2
+  const midLng = (lng1 + lng2) / 2
+  const dx = lat2 - lat1
+  const dy = lng2 - lng1
+  const len = Math.sqrt(dx * dx + dy * dy) || 1
+  const nx = (-dy / len) * bend * len * 0.25
+  const ny = (dx / len) * bend * len * 0.25
+  const cx = midLat + nx
+  const cy = midLng + ny
+  const out: L.LatLngTuple[] = []
+  const n = Math.max(8, Math.floor(segments))
+  for (let i = 0; i <= n; i++) {
+    const t = i / n
+    const omt = 1 - t
+    const lat = omt * omt * lat1 + 2 * omt * t * cx + t * t * lat2
+    const lng = omt * omt * lng1 + 2 * omt * t * cy + t * t * lng2
+    out.push([lat, lng])
+  }
+  return out
+}
+
+type ComparisonFlowPalette = {
+  base: string
+  main: string
+  baseClass: string
+  lineClass: string
+  moverInnerClass: string
+}
+
+function comparisonFlowPalette(rank: number): ComparisonFlowPalette {
+  if (rank <= 1) {
+    return {
+      base: 'rgba(5, 150, 105, 0.34)',
+      main: '#059669',
+      baseClass: 'emap-flow-line-base emap-flow-line-base--best',
+      lineClass: 'emap-flow-line emap-flow-line--best',
+      moverInnerClass: 'emap-flow-mover emap-flow-mover--best',
+    }
+  }
+  if (rank === 2) {
+    return {
+      base: 'rgba(234, 88, 12, 0.34)',
+      main: '#ea580c',
+      baseClass: 'emap-flow-line-base emap-flow-line-base--orange',
+      lineClass: 'emap-flow-line emap-flow-line--orange',
+      moverInnerClass: 'emap-flow-mover emap-flow-mover--orange',
+    }
+  }
+  return {
+    base: 'rgba(220, 38, 38, 0.34)',
+    main: '#dc2626',
+    baseClass: 'emap-flow-line-base emap-flow-line-base--red',
+    lineClass: 'emap-flow-line emap-flow-line--red',
+    moverInnerClass: 'emap-flow-mover emap-flow-mover--red',
+  }
+}
+
+/** 沿折线移动的箭头组（▶▶▶），随路径切线转向 */
+function attachFlowMoverAlongCurve(
+  flowLayer: L.LayerGroup,
+  curve: L.LatLngTuple[],
+  durationMs: number,
+  moverInnerClass: string,
+): void {
+  if (curve.length < 2) return
+  const state = { cancelled: false, raf: 0 }
+  const marker = L.marker(curve[0], {
+    icon: L.divIcon({
+      className: 'emap-flow-mover-wrap',
+      html: `<div class="${moverInnerClass}" aria-hidden="true"><span class="emap-flow-arrow-triple"><span>▶</span><span>▶</span><span>▶</span></span></div>`,
+      iconSize: [36, 20],
+      iconAnchor: [18, 10],
+    }),
+    interactive: false,
+  }).addTo(flowLayer)
+  let start = performance.now()
+  const step = () => {
+    if (state.cancelled) return
+    const now = performance.now()
+    const u = ((now - start) % durationMs) / durationMs
+    const f = u * (curve.length - 1)
+    const idx = Math.min(Math.floor(f), curve.length - 2)
+    const localT = f - idx
+    const p0 = curve[idx]!
+    const p1 = curve[idx + 1]!
+    const lat = p0[0] + (p1[0] - p0[0]) * localT
+    const lng = p0[1] + (p1[1] - p0[1]) * localT
+    marker.setLatLng([lat, lng])
+    const br = bearingDeg(p0[0], p0[1], p1[0], p1[1])
+    const tri = marker.getElement()?.querySelector('.emap-flow-arrow-triple') as HTMLElement | null
+    /* translateY：三角字形视觉重心略低于几何中心，与粗线对齐 */
+    if (tri) tri.style.transform = `translateY(-1.5px) rotate(${br - 90}deg)`
+    state.raf = requestAnimationFrame(step)
+  }
+  state.raf = requestAnimationFrame(step)
+  flowOverlayCleanups.push(() => {
+    state.cancelled = true
+    cancelAnimationFrame(state.raf)
+    try {
+      flowLayer.removeLayer(marker)
+    } catch {
+      /* 可能已被 clearLayers */
+    }
+  })
 }
 
 /** 冶炼厂利润排行：按比价类型取后端已算好的利润 */
@@ -1389,66 +1510,54 @@ function findSmelterPoint(name: string): MapPoint | null {
 }
 
 function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[]) {
+  cancelFlowOverlayAnimations()
   stopFlowAnimations()
   const flowLayer = flowLayerRef.value
   const tipLayer = topTipLayerRef.value
+  const flowRenderer = flowPathSvgRendererRef.value
   if (!flowLayer || !tipLayer) return
   flowLayer.clearLayers()
   tipLayer.clearLayers()
-  const palette = ['#2563eb', '#7c3aed', '#db2777', '#ea580c', '#059669', '#0ea5e9']
   const list = ranks.slice(0, MAX_MAP_FLOW_TARGETS)
   for (let i = 0; i < list.length; i++) {
     const row = list[i]!
     const smelter = findSmelterPoint(row.smelter)
     if (!smelter) continue
-    const color = palette[i % palette.length]!
-    L.polyline(
-      [
-        [warehouse.lat, warehouse.lng],
-        [smelter.lat, smelter.lng],
-      ],
-      {
-        color,
-        weight: 5,
-        opacity: 0.95,
-        dashArray: '14 10',
-        className: 'emap-flow-line',
-      },
-    ).addTo(flowLayer)
-    const br = bearingDeg(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng)
-    const movingArrow = L.marker(
-      pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.08),
-      {
-        icon: L.divIcon({
-          className: 'emap-flow-arrow-wrap',
-          html: `<div class="emap-flow-arrow emap-flow-arrow--3d" style="color:${color};transform:rotate(${br - 90}deg)">➤</div>`,
-          iconSize: [24, 24],
-          iconAnchor: [12, 12],
-        }),
-        interactive: false,
-      },
-    ).addTo(flowLayer)
-
-    let frac = 0.08
-    const speed = 0.014 + (i % 3) * 0.002
-    const timer = window.setInterval(() => {
-      frac += speed
-      if (frac > 0.92) frac = 0.08
-      movingArrow.setLatLng(
-        pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, frac),
-      )
-    }, 60)
-    flowAnimTimerIds.push(timer)
-
-    L.marker(pointAlongFrac(warehouse.lat, warehouse.lng, smelter.lat, smelter.lng, 0.82), {
-      icon: L.divIcon({
-        className: 'emap-flow-arrow-wrap',
-        html: `<div class="emap-flow-arrow" style="color:${color};transform:rotate(${br - 90}deg);opacity:.55">▶</div>`,
-        iconSize: [20, 20],
-        iconAnchor: [10, 10],
-      }),
+    const curve = quadraticBezierLatLng(
+      warehouse.lat,
+      warehouse.lng,
+      smelter.lat,
+      smelter.lng,
+      56,
+      0.44 + (i % 5) * 0.02,
+    )
+    const palette = comparisonFlowPalette(row.rank)
+    const staggerClass = `emap-flow-stagger-${i % 6}`
+    const rendererOpt = flowRenderer ? { renderer: flowRenderer } : {}
+    const baseOpts = {
+      color: palette.base,
+      weight: 5,
+      opacity: 1,
+      lineCap: 'round' as const,
+      lineJoin: 'round' as const,
+      className: palette.baseClass,
       interactive: false,
-    }).addTo(flowLayer)
+      ...rendererOpt,
+    }
+    const dashOpts = {
+      color: palette.main,
+      weight: 3.2,
+      opacity: 1,
+      lineCap: 'round' as const,
+      lineJoin: 'round' as const,
+      dashArray: '12 38',
+      className: `${palette.lineClass} ${staggerClass}`,
+      interactive: false,
+      ...rendererOpt,
+    }
+    L.polyline(curve, baseOpts).addTo(flowLayer)
+    L.polyline(curve, dashOpts).addTo(flowLayer)
+    attachFlowMoverAlongCurve(flowLayer, curve, 2200 + (i % 4) * 280, palette.moverInnerClass)
     L.tooltip({
       permanent: true,
       direction: 'top',
@@ -1887,6 +1996,7 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   dismissGeoNearestToast()
   dismissComparisonPrereqToast()
+  cancelFlowOverlayAnimations()
   stopFlowAnimations()
   if (forecastTrendResizeHandler) {
     window.removeEventListener('resize', forecastTrendResizeHandler)
@@ -1900,6 +2010,7 @@ onBeforeUnmount(() => {
   markerLayerRef.value = null
   flowLayerRef.value = null
   topTipLayerRef.value = null
+  flowPathSvgRendererRef.value = null
 })
 </script>
 
@@ -2959,8 +3070,100 @@ onBeforeUnmount(() => {
 }
 
 .emap-flow-line {
-  stroke-dasharray: 14 10;
+  stroke-dasharray: 12 38;
   animation: emap-flow 0.85s linear infinite;
+}
+
+/* 比价流向：折线不参与命中，避免挡住仓库/冶炼厂图钉 */
+.leaflet-container svg path[class*='emap-flow-line'] {
+  pointer-events: none !important;
+}
+
+.leaflet-container svg path.emap-flow-line-base--best {
+  filter: drop-shadow(0 0 4px rgba(5, 150, 105, 0.85));
+}
+.leaflet-container svg path.emap-flow-line-base--orange {
+  filter: drop-shadow(0 0 3px rgba(234, 88, 12, 0.75));
+}
+.leaflet-container svg path.emap-flow-line-base--red {
+  filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.78));
+}
+
+.leaflet-container .leaflet-marker:has(.emap-flow-mover-wrap) {
+  pointer-events: none !important;
+}
+
+/* 流向箭头：与 iconAnchor 对齐，内容在 iconSize 框内几何居中 */
+.leaflet-div-icon.emap-flow-mover-wrap {
+  border: none !important;
+  background: transparent !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box;
+}
+
+.leaflet-div-icon.emap-flow-mover-wrap > div {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  line-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.emap-flow-stagger-1 {
+  animation-delay: -0.12s;
+}
+.emap-flow-stagger-2 {
+  animation-delay: -0.24s;
+}
+.emap-flow-stagger-3 {
+  animation-delay: -0.36s;
+}
+.emap-flow-stagger-4 {
+  animation-delay: -0.48s;
+}
+.emap-flow-stagger-5 {
+  animation-delay: -0.6s;
+}
+
+.emap-flow-arrow-triple {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: -3px;
+  line-height: 0;
+  transform-origin: center center;
+}
+
+.emap-flow-arrow-triple > span {
+  display: block;
+  line-height: 1;
+}
+
+.emap-flow-mover--best {
+  color: #059669;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.emap-flow-mover--orange {
+  color: #ea580c;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.emap-flow-mover--red {
+  color: #dc2626;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85),
+    0 2px 6px rgba(0, 0, 0, 0.35);
 }
 
 .emap-flow-arrow-wrap {
@@ -3056,7 +3259,7 @@ onBeforeUnmount(() => {
 
 @keyframes emap-flow {
   0% {
-    stroke-dashoffset: 24;
+    stroke-dashoffset: 50;
   }
   100% {
     stroke-dashoffset: 0;
