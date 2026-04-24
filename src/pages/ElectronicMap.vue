@@ -15,7 +15,13 @@
           <i class="bi bi-map"></i>
           库房 / 冶炼厂分布
         </span>
-        <button type="button" class="btn btn-sm btn-primary ms-auto" :disabled="loading" @click="loadAndPlot">
+        <button
+          type="button"
+          class="btn btn-sm btn-primary ms-auto"
+          :disabled="loading"
+          title="从服务器拉取最新库房与冶炼厂并更新本地缓存"
+          @click="loadAndPlot"
+        >
           <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
           {{ loading ? '加载中…' : '刷新数据' }}
         </button>
@@ -57,7 +63,13 @@
                 <option value="tax3">3%含税价比价</option>
               </select>
             </div>
-            <button type="button" class="btn btn-sm btn-primary" :disabled="loading" @click="loadAndPlot">
+            <button
+              type="button"
+              class="btn btn-sm btn-primary"
+              :disabled="loading"
+              title="从服务器拉取最新库房与冶炼厂并更新本地缓存"
+              @click="loadAndPlot"
+            >
               <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
               {{ loading ? '加载中…' : '刷新数据' }}
             </button>
@@ -132,6 +144,16 @@
                 <i class="bi bi-grip-vertical" aria-hidden="true"></i>
               </span>
               <div class="emap-map-tools-title">地图工具</div>
+              <button
+                type="button"
+                class="emap-map-tools-collapse"
+                title="收起工具栏"
+                aria-label="收起地图工具"
+                @pointerdown.stop
+                @click.stop="mapToolsCollapsed = true"
+              >
+                <i class="bi bi-chevron-right" aria-hidden="true"></i>
+              </button>
             </div>
           <label class="emap-tool-check">
             <input v-model="enableCoordPick" type="checkbox" class="form-check-input" />
@@ -235,14 +257,6 @@
           <div v-if="lastClickedCoordText" class="emap-tool-coord text-muted">
             {{ lastClickedCoordText }}
           </div>
-            <button
-              type="button"
-              class="emap-map-tools-arrow"
-              title="收起工具栏"
-              @click="mapToolsCollapsed = true"
-            >
-              ▶
-            </button>
           </div>
         </transition>
       </div>
@@ -501,6 +515,8 @@ const COMPARISON_PREREQ_TOAST_MS = 10_000
 const EMAP_TOOLBAR_COLLAPSED_KEY = 'emap.toolbar.collapsed'
 /** 回收品类勾选与吨数：跨页面/刷新保留 */
 const EMAP_CATEGORY_PREFS_KEY = 'emap.categoryPrefs.v1'
+/** 库房/冶炼厂打点数据：离开页面再进入时沿用缓存，仅「刷新数据」重新拉取 */
+const EMAP_MARKERS_CACHE_KEY = 'emap.markersPayload.v1'
 
 /** 地图「按省筛选」：34 个省级行政区（含省/自治区/直辖市/特别行政区），与国家统计口径一致 */
 type EmapChinaRegionItem = { value: string; label: string }
@@ -730,6 +746,8 @@ function onBubbleDragPointerDown(e: PointerEvent) {
 }
 
 function onMapToolsHeadPointerDown(e: PointerEvent) {
+  const t = e.target as HTMLElement
+  if (t.closest('.emap-map-tools-collapse')) return
   onMapToolsDragDown(e)
 }
 
@@ -2606,6 +2624,68 @@ async function runForecastForWarehouse(warehouse: MapPoint) {
   }
 }
 
+function reviveMapPointFromCache(p: unknown): MapPoint | null {
+  if (!p || typeof p !== 'object') return null
+  const o = p as Record<string, unknown>
+  if (o.kind !== 'warehouse' && o.kind !== 'smelter') return null
+  if (typeof o.id !== 'string' || !o.id.trim()) return null
+  const lat = Number(o.lat)
+  const lng = Number(o.lng)
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  const raw =
+    o.raw != null && typeof o.raw === 'object' && !Array.isArray(o.raw)
+      ? (o.raw as Record<string, unknown>)
+      : {}
+  const title = typeof o.title === 'string' ? o.title : String(o.title ?? '')
+  const subtitle = typeof o.subtitle === 'string' ? o.subtitle : String(o.subtitle ?? '')
+  if (o.kind === 'warehouse') {
+    const pinColor = typeof o.pinColor === 'string' && o.pinColor.trim() ? o.pinColor : undefined
+    return { kind: 'warehouse', id: o.id, title, subtitle, lat, lng, pinColor, raw }
+  }
+  return { kind: 'smelter', id: o.id, title, subtitle, lat, lng, raw }
+}
+
+function readEmapMarkersCache(): MapPoint[] | null {
+  try {
+    if (typeof localStorage === 'undefined') return null
+    const raw = localStorage.getItem(EMAP_MARKERS_CACHE_KEY)
+    if (raw == null) return null
+    const parsed = JSON.parse(raw) as { v?: unknown; points?: unknown }
+    if (parsed.v !== 1 || !Array.isArray(parsed.points)) return null
+    const points: MapPoint[] = []
+    for (const x of parsed.points) {
+      const pt = reviveMapPointFromCache(x)
+      if (pt) points.push(pt)
+    }
+    if (points.length !== parsed.points.length) return null
+    return points
+  } catch {
+    return null
+  }
+}
+
+function writeEmapMarkersCache(points: MapPoint[]) {
+  try {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(EMAP_MARKERS_CACHE_KEY, JSON.stringify({ v: 1, points, ts: Date.now() }))
+  } catch {
+    /* 存储配额或无痕模式 */
+  }
+}
+
+function restoreEmapMarkersFromCache(): boolean {
+  const points = readEmapMarkersCache()
+  if (points === null) return false
+  if (!points.length) {
+    loadError.value =
+      '接口未返回可打点的库房或冶炼厂经纬度，请在业务系统补全坐标后刷新。'
+  } else {
+    loadError.value = ''
+  }
+  renderMarkers(points)
+  return true
+}
+
 async function loadCategories() {
   categoriesError.value = ''
   categoriesLoading.value = true
@@ -2682,6 +2762,7 @@ async function loadAndPlot() {
       loadError.value = '接口未返回可打点的库房或冶炼厂经纬度，请在业务系统补全坐标后刷新。'
     }
     renderMarkers(points)
+    writeEmapMarkersCache(points)
   } catch (e) {
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -2694,7 +2775,16 @@ onMounted(async () => {
   document.addEventListener('webkitfullscreenchange', onEmapFullscreenChange)
   await nextTick()
   initMap()
-  await loadAndPlot()
+  const restored = restoreEmapMarkersFromCache()
+  if (!restored) {
+    await loadAndPlot()
+  } else {
+    void loadCategories()
+    void nextTick(() => {
+      mapRef.value?.invalidateSize()
+      clampMapToolsFloatInWrap()
+    })
+  }
 })
 
 onBeforeUnmount(() => {
@@ -3111,8 +3201,35 @@ onBeforeUnmount(() => {
 }
 
 .emap-map-tools-title {
+  flex: 1;
+  min-width: 0;
   font-weight: 700;
   color: #f1f5f9;
+}
+
+.emap-map-tools-collapse {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  margin: -2px -6px -2px 6px;
+  padding: 0;
+  border: 1px solid rgba(34, 211, 238, 0.5);
+  border-radius: 8px;
+  background: rgba(8, 26, 52, 0.9);
+  color: #7dd3fc;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+}
+
+.emap-map-tools-collapse:hover {
+  background: rgba(34, 211, 238, 0.2);
+  color: #f8fafc;
+  border-color: rgba(34, 211, 238, 0.65);
 }
 
 .emap-map-tools-tab {
@@ -3369,30 +3486,6 @@ onBeforeUnmount(() => {
   line-height: 1.45;
   color: #e2e8f0;
   word-break: break-word;
-}
-
-.emap-map-tools-arrow {
-  position: absolute;
-  top: 50%;
-  right: -14px;
-  transform: translateY(-50%);
-  width: 20px;
-  height: 44px;
-  border: 1px solid rgba(34, 211, 238, 0.35);
-  border-left: none;
-  border-radius: 0 8px 8px 0;
-  background: rgba(8, 26, 52, 0.96);
-  color: #e2e8f0;
-  font-size: 11px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
-}
-
-.emap-map-tools-arrow:hover {
-  background: rgba(12, 36, 68, 0.98);
 }
 
 .emap-cmp-panel {
