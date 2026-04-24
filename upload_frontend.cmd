@@ -7,7 +7,7 @@ REM AI 前端上传脚本（Windows CMD）
 REM ===============================
 
 REM 项目目录
-set "PROJECT_DIR=C:\Users\ysc02\Desktop\66\ai_project1"
+set "PROJECT_DIR=E:\HTML\ai_pred"
 set "LOCAL_DIR=%PROJECT_DIR%\dist"
 
 REM 服务器信息
@@ -20,7 +20,7 @@ REM 兼容目录（你服务器文件树中存在 /home/ubuntu/var/www/ai_projec
 set "REMOTE_DIR_FALLBACK=/home/ubuntu/var/www/ai_project1"
 
 REM SSH 私钥
-set "SSH_KEY=C:\Users\ysc02\.ssh\redspiderbc.pem"
+set "SSH_KEY=C:\Users\21612\.ssh\redspiderbc.pem"
 
 echo.
 echo [1/6] 检查 ssh/tar 命令...

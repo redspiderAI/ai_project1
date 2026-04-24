@@ -1382,40 +1382,6 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
     const row = list[i]!
     const smelter = findSmelterPoint(row.smelter)
     if (!smelter) continue
-    const curve = quadraticBezierLatLng(
-      warehouse.lat,
-      warehouse.lng,
-      smelter.lat,
-      smelter.lng,
-      56,
-      0.36 + (i % 5) * 0.02,
-    )
-    const palette = comparisonFlowPalette(row.rank)
-    const staggerClass = `emap-flow-stagger-${i % 6}`
-    const baseOpts = {
-      color: palette.base,
-      weight: 5,
-      opacity: 1,
-      lineCap: 'round' as const,
-      lineJoin: 'round' as const,
-      className: palette.baseClass,
-      interactive: false,
-      ...(flowRenderer ? { renderer: flowRenderer } : {}),
-    }
-    const dashOpts = {
-      color: palette.main,
-      weight: 3.2,
-      opacity: 0.95,
-      lineCap: 'round' as const,
-      lineJoin: 'round' as const,
-      dashArray: '14 28',
-      className: `${palette.lineClass} ${staggerClass}`,
-      interactive: false,
-      ...(flowRenderer ? { renderer: flowRenderer } : {}),
-    }
-    L.polyline(curve, baseOpts).addTo(flowLayer)
-    L.polyline(curve, dashOpts).addTo(flowLayer)
-    attachFlowMoverAlongCurve(flowLayer, curve, 2200 + (i % 4) * 280, palette.moverInnerClass)
     const color = palette[i % palette.length]!
     L.polyline(
       [
@@ -1899,9 +1865,9 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
-  stopFlowAnimations()
   dismissGeoNearestToast()
   dismissComparisonPrereqToast()
+  stopFlowAnimations()
   if (forecastTrendResizeHandler) {
     window.removeEventListener('resize', forecastTrendResizeHandler)
     forecastTrendResizeHandler = null
@@ -2992,6 +2958,34 @@ onBeforeUnmount(() => {
 .emap-flow-arrow-wrap {
   background: transparent;
   border: none;
+}
+
+.emap-flow-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  font-size: 11px;
+  line-height: 1;
+  font-weight: 700;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff;
+}
+
+.emap-flow-arrow--3d {
+  font-size: 14px;
+  font-weight: 800;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.95),
+    0 3px 6px rgba(0, 0, 0, 0.45),
+    0 0 10px rgba(37, 99, 235, 0.35);
+  filter: saturate(1.15);
+  animation: emap-arrow-float 0.9s ease-in-out infinite;
+}
+
+.emap-flow-arrow-wrap {
+  background: transparent;
+  border: none;
   border-radius: 6px;
   box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
   font-size: 11px;
@@ -3049,99 +3043,6 @@ onBeforeUnmount(() => {
 
 .emap-shell--dashboard .leaflet-popup-content a {
   color: #7dd3fc;
-}
-</style>
-
-<style>
-/* 比价流向：折线不参与命中，避免挡住仓库/冶炼厂图钉的悬浮与点击 */
-.leaflet-container svg path[class*='emap-flow-line'] {
-  pointer-events: none !important;
-}
-
-/* 沿路径移动的箭头标记容器不拦截事件（interactive:false 的补充） */
-.leaflet-container .leaflet-marker:has(.emap-flow-mover-wrap) {
-  pointer-events: none !important;
-}
-
-/* 比价流向：preferCanvas 时默认 Canvas 无线流动画，脚本为流向折线指定 L.svg()；全局样式命中 overlay SVG */
-.leaflet-container svg path.emap-flow-line-base--best {
-  filter: drop-shadow(0 0 4px rgba(5, 150, 105, 0.85));
-}
-.leaflet-container svg path.emap-flow-line-base--orange {
-  filter: drop-shadow(0 0 3px rgba(234, 88, 12, 0.75));
-}
-.leaflet-container svg path.emap-flow-line-base--red {
-  filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.78));
-}
-
-.leaflet-container svg path.emap-flow-line {
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  animation: emap-flow-dash 2.2s linear infinite;
-}
-.leaflet-container svg path.emap-flow-line--best {
-  filter: drop-shadow(0 0 5px rgba(16, 185, 129, 1));
-}
-.leaflet-container svg path.emap-flow-line--orange {
-  filter: drop-shadow(0 0 4px rgba(249, 115, 22, 0.95));
-}
-.leaflet-container svg path.emap-flow-line--red {
-  filter: drop-shadow(0 0 4px rgba(248, 113, 113, 0.95));
-}
-
-.leaflet-container svg path.emap-flow-stagger-1 {
-  animation-delay: 0.2s;
-}
-.leaflet-container svg path.emap-flow-stagger-2 {
-  animation-delay: 0.4s;
-}
-.leaflet-container svg path.emap-flow-stagger-3 {
-  animation-delay: 0.6s;
-}
-.leaflet-container svg path.emap-flow-stagger-4 {
-  animation-delay: 0.8s;
-}
-.leaflet-container svg path.emap-flow-stagger-5 {
-  animation-delay: 1s;
-}
-
-.leaflet-container .emap-flow-mover-wrap {
-  background: transparent !important;
-  border: none !important;
-}
-
-.leaflet-container .emap-flow-mover {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  font-size: 11px;
-  line-height: 1;
-  font-weight: 700;
-  text-shadow: 0 0 2px #fff, 0 0 2px #fff;
-}
-
-.emap-flow-arrow--3d {
-  font-size: 14px;
-  font-weight: 800;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.95),
-    0 3px 6px rgba(0, 0, 0, 0.45),
-    0 0 10px rgba(37, 99, 235, 0.35);
-  filter: saturate(1.15);
-  animation: emap-arrow-float 0.9s ease-in-out infinite;
-}
-
-.emap-rank-tip {
-  background: rgba(15, 23, 42, 0.88);
-  color: #fff;
-  border: none;
-  border-radius: 6px;
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.25);
-  font-size: 11px;
-  line-height: 1.35;
-  padding: 6px 8px;
 }
 
 @keyframes emap-flow {
