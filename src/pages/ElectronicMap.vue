@@ -110,7 +110,7 @@
       <div
         ref="mapToolsFloatRef"
         class="emap-map-tools-float"
-        :class="{ 'emap-map-tools-float--default': mapToolsFloatPos == null }"
+        :class="{ 'emap-map-tools-float--default': mapToolsFloatTopPx == null }"
         :style="mapToolsFloatStyle"
       >
         <div
@@ -118,7 +118,7 @@
           class="emap-map-tools-bubble"
           @pointerdown="onBubbleDragPointerDown"
         >
-          <span class="emap-map-tools-drag-hint" aria-hidden="true" title="按住拖动">
+          <span class="emap-map-tools-drag-hint" aria-hidden="true" title="上下拖动">
             <i class="bi bi-grip-vertical" aria-hidden="true"></i>
           </span>
           <button type="button" class="emap-map-tools-tab" @click="mapToolsCollapsed = false">
@@ -128,7 +128,7 @@
         <transition name="emap-tools-slide">
           <div v-if="!mapToolsCollapsed" class="emap-map-tools">
             <div class="emap-map-tools-head" @pointerdown="onMapToolsHeadPointerDown">
-              <span class="emap-map-tools-drag-hint" aria-hidden="true" title="按住标题栏拖动">
+              <span class="emap-map-tools-drag-hint" aria-hidden="true" title="按住标题栏上下拖动">
                 <i class="bi bi-grip-vertical" aria-hidden="true"></i>
               </span>
               <div class="emap-map-tools-title">地图工具</div>
@@ -152,23 +152,66 @@
           </button>
           <div class="emap-tool-block">
             <span class="emap-tool-block-label">搜索库房 / 冶炼厂</span>
-            <div class="emap-tool-search-row">
-              <input
-                v-model="emapMapSearchText"
-                type="search"
-                class="form-control form-control-sm"
-                placeholder="名称或地址关键词"
-                autocomplete="off"
-                @keydown.enter.prevent="runEmapPointSearch"
-              />
-              <button
-                type="button"
-                class="btn btn-sm btn-outline-secondary flex-shrink-0"
-                title="在地图上定位并打开信息"
-                @click="runEmapPointSearch"
+            <div class="emap-tool-search-wrap">
+              <div class="emap-tool-search-row">
+                <input
+                  v-model="emapMapSearchText"
+                  type="search"
+                  class="form-control form-control-sm"
+                  placeholder="输入名称，列表中选点"
+                  autocomplete="off"
+                  aria-autocomplete="list"
+                  :aria-expanded="emapPointSearchOpen"
+                  aria-controls="emap-point-search-list"
+                  @focus="onEmapPointSearchFocus"
+                  @blur="onEmapPointSearchBlur"
+                  @input="onEmapPointSearchInput"
+                  @keydown.enter.prevent="runEmapPointSearch"
+                  @keydown.down.prevent="onEmapPointSearchKeyArrow('down')"
+                  @keydown.up.prevent="onEmapPointSearchKeyArrow('up')"
+                  @keydown.escape.prevent="emapPointSearchOpen = false"
+                />
+                <button
+                  type="button"
+                  class="btn btn-sm btn-outline-secondary flex-shrink-0"
+                  title="定位到当前高亮项（或第一项）"
+                  @mousedown.prevent
+                  @click="runEmapPointSearch"
+                >
+                  定位
+                </button>
+              </div>
+              <div
+                v-show="emapPointSearchOpen && emapMapSearchText.trim()"
+                id="emap-point-search-list"
+                class="emap-point-search-dropdown"
+                role="listbox"
+                aria-label="名称匹配结果"
               >
-                定位
-              </button>
+                <template v-if="emapPointSearchCandidates.length">
+                  <button
+                    v-for="(p, idx) in emapPointSearchCandidates"
+                    :id="'emap-point-search-' + idx"
+                    :key="p.kind + '-' + p.id"
+                    type="button"
+                    class="emap-point-search-item"
+                    :class="{ 'emap-point-search-item--active': idx === emapPointSearchActiveIdx }"
+                    role="option"
+                    :aria-selected="idx === emapPointSearchActiveIdx"
+                    @mousedown.prevent="focusMapPointFromSearch(p)"
+                    @mouseenter="emapPointSearchActiveIdx = idx"
+                  >
+                    <span class="emap-point-search-item-title">{{ p.title }}</span>
+                    <span class="emap-point-search-item-meta">
+                      <span class="emap-point-search-item-kind">{{
+                        p.kind === 'warehouse' ? '库房' : '冶炼厂'
+                      }}</span>
+                      <span v-if="p.subtitle" class="emap-point-search-item-sub">{{ p.subtitle }}</span>
+                    </span>
+                  </button>
+                </template>
+                <div v-else class="emap-point-search-empty">无匹配名称，请修改关键词</div>
+              </div>
             </div>
             <p v-if="emapSearchFeedback" class="emap-tool-hint text-muted mb-0">{{ emapSearchFeedback }}</p>
           </div>
@@ -178,13 +221,15 @@
               id="emap-province-filter"
               v-model="emapProvinceFilter"
               class="form-select form-select-sm"
-              title="仅高亮所选省份的库房与冶炼厂；外省变淡，鼠标悬停外省可临时看清该点"
+              title="34 个省级行政区；地图绘制省界红线，并筛选库房/冶炼厂"
             >
               <option value="">全部（不筛选）</option>
-              <option v-for="pr in mapProvinceOptions" :key="pr" :value="pr">{{ pr }}</option>
+              <option v-for="it in EMAP_CHINA_REGION_OPTIONS" :key="it.value" :value="it.value">
+                {{ it.label }}
+              </option>
             </select>
             <p class="emap-tool-hint text-muted mb-0">
-              外省标记变淡；鼠标移到外省点上可临时恢复样式并查看信息。
+              外省标记变淡；鼠标移到外省点上可临时恢复样式。选中省后在地图上用红线标出省界（需联网加载边界数据）。
             </p>
           </div>
           <div v-if="lastClickedCoordText" class="emap-tool-coord text-muted">
@@ -457,6 +502,118 @@ const EMAP_TOOLBAR_COLLAPSED_KEY = 'emap.toolbar.collapsed'
 /** 回收品类勾选与吨数：跨页面/刷新保留 */
 const EMAP_CATEGORY_PREFS_KEY = 'emap.categoryPrefs.v1'
 
+/** 地图「按省筛选」：34 个省级行政区（含省/自治区/直辖市/特别行政区），与国家统计口径一致 */
+type EmapChinaRegionItem = { value: string; label: string }
+type EmapChinaRegionGroup = { group: string; items: EmapChinaRegionItem[] }
+
+const EMAP_CHINA_REGION_GROUPS: EmapChinaRegionGroup[] = [
+  {
+    group: '23个省',
+    items: [
+      { value: '河北', label: '河北省' },
+      { value: '山西', label: '山西省' },
+      { value: '辽宁', label: '辽宁省' },
+      { value: '吉林', label: '吉林省' },
+      { value: '黑龙江', label: '黑龙江省' },
+      { value: '江苏', label: '江苏省' },
+      { value: '浙江', label: '浙江省' },
+      { value: '安徽', label: '安徽省' },
+      { value: '福建', label: '福建省' },
+      { value: '江西', label: '江西省' },
+      { value: '山东', label: '山东省' },
+      { value: '河南', label: '河南省' },
+      { value: '湖北', label: '湖北省' },
+      { value: '湖南', label: '湖南省' },
+      { value: '广东', label: '广东省' },
+      { value: '海南', label: '海南省' },
+      { value: '四川', label: '四川省' },
+      { value: '贵州', label: '贵州省' },
+      { value: '云南', label: '云南省' },
+      { value: '陕西', label: '陕西省' },
+      { value: '甘肃', label: '甘肃省' },
+      { value: '青海', label: '青海省' },
+      { value: '台湾', label: '台湾省' },
+    ],
+  },
+  {
+    group: '5个自治区',
+    items: [
+      { value: '内蒙古', label: '内蒙古自治区' },
+      { value: '广西', label: '广西壮族自治区' },
+      { value: '西藏', label: '西藏自治区' },
+      { value: '宁夏', label: '宁夏回族自治区' },
+      { value: '新疆', label: '新疆维吾尔自治区' },
+    ],
+  },
+  {
+    group: '4个直辖市',
+    items: [
+      { value: '北京', label: '北京市' },
+      { value: '天津', label: '天津市' },
+      { value: '上海', label: '上海市' },
+      { value: '重庆', label: '重庆市' },
+    ],
+  },
+  {
+    group: '2个特别行政区',
+    items: [
+      { value: '香港', label: '香港特别行政区' },
+      { value: '澳门', label: '澳门特别行政区' },
+    ],
+  },
+]
+
+const EMAP_CHINA_REGION_OPTIONS: EmapChinaRegionItem[] = EMAP_CHINA_REGION_GROUPS.flatMap((g) => g.items)
+
+/** 筛选值（简称）→ 行政区划代码，用于拉取省界 GeoJSON（阿里云 DataV areas_v3） */
+const EMAP_FILTER_TO_ADCODE: Record<string, string> = {
+  北京: '110000',
+  天津: '120000',
+  上海: '310000',
+  重庆: '500000',
+  河北: '130000',
+  山西: '140000',
+  辽宁: '210000',
+  吉林: '220000',
+  黑龙江: '230000',
+  江苏: '320000',
+  浙江: '330000',
+  安徽: '340000',
+  福建: '350000',
+  江西: '360000',
+  山东: '370000',
+  河南: '410000',
+  湖北: '420000',
+  湖南: '430000',
+  广东: '440000',
+  海南: '460000',
+  四川: '510000',
+  贵州: '520000',
+  云南: '530000',
+  陕西: '610000',
+  甘肃: '620000',
+  青海: '630000',
+  台湾: '710000',
+  内蒙古: '150000',
+  广西: '450000',
+  西藏: '540000',
+  宁夏: '640000',
+  新疆: '650000',
+  香港: '810000',
+  澳门: '820000',
+}
+
+function emapProvinceFilterToAdcode(sel: string): string | null {
+  const t = sel.trim().replace(/\s+/g, '')
+  if (EMAP_FILTER_TO_ADCODE[t]) return EMAP_FILTER_TO_ADCODE[t]
+  const stripped = t
+    .replace(/特别行政区$/u, '')
+    .replace(/壮族自治区|维吾尔自治区|回族自治区|自治区$/u, '')
+    .replace(/省$/u, '')
+    .replace(/市$/u, '')
+  return EMAP_FILTER_TO_ADCODE[stripped] ?? null
+}
+
 function readToolbarCollapsed(): boolean {
   try {
     return sessionStorage.getItem(EMAP_TOOLBAR_COLLAPSED_KEY) === '1'
@@ -484,6 +641,8 @@ const mapRef = shallowRef<L.Map | null>(null)
 const markerLayerRef = shallowRef<L.LayerGroup | null>(null)
 const flowLayerRef = shallowRef<L.LayerGroup | null>(null)
 const topTipLayerRef = shallowRef<L.LayerGroup | null>(null)
+/** 按省筛选时绘制的行政区红线轮廓（GeoJSON） */
+const provinceOutlineLayerRef = shallowRef<L.GeoJSON | null>(null)
 /** 比价流向折线统一走 SVG，虚线 dash 动画与双层描边更稳定 */
 const flowPathSvgRendererRef = shallowRef<L.SVG | null>(null)
 const loading = ref(false)
@@ -535,25 +694,31 @@ const enableCoordPick = ref(false)
 const enableAutoZoomOnPointClick = ref(false)
 const lastClickedCoordText = ref('')
 const mapToolsCollapsed = ref(true)
+
+watch(mapToolsCollapsed, async (collapsed) => {
+  if (!collapsed) {
+    await nextTick()
+    clampMapToolsFloatInWrap()
+    mapRef.value?.invalidateSize()
+  }
+})
+
 const mapToolsFloatRef = ref<HTMLElement | null>(null)
-/** 相对地图容器左上角；null 表示使用默认贴右侧居中 */
-const mapToolsFloatPos = ref<{ x: number; y: number } | null>(null)
+/** 贴右侧时相对地图容器顶边的 top（px）；null 表示垂直居中（50% + translateY） */
+const mapToolsFloatTopPx = ref<number | null>(null)
 
 const mapToolsFloatStyle = computed(() => {
-  if (mapToolsFloatPos.value == null) return {}
-  const { x, y } = mapToolsFloatPos.value
+  if (mapToolsFloatTopPx.value == null) return {}
   return {
-    left: `${x}px`,
-    top: `${y}px`,
-    right: 'auto',
+    top: `${mapToolsFloatTopPx.value}px`,
+    right: '0',
+    left: 'auto',
     transform: 'none',
   } as Record<string, string>
 })
 
 let mapToolsDragPid: number | null = null
-let mapToolsDragSX = 0
 let mapToolsDragSY = 0
-let mapToolsDragOX = 0
 let mapToolsDragOY = 0
 let mapToolsDragSession = false
 const mapToolsPointerMoveOpts: AddEventListenerOptions = { passive: false }
@@ -574,15 +739,14 @@ function onMapToolsDragMove(e: PointerEvent) {
   e.preventDefault()
   const wrap = mapWrapRef.value
   const dock = mapToolsFloatRef.value
-  if (!wrap || !dock || mapToolsFloatPos.value == null) return
-  const wr = wrap.getBoundingClientRect()
-  const dw = dock.offsetWidth
+  if (!wrap || !dock || mapToolsFloatTopPx.value == null) return
+  const wih = wrap.clientHeight
   const dh = dock.offsetHeight
-  let nx = mapToolsDragOX + (e.clientX - mapToolsDragSX)
+  const pad = 8
   let ny = mapToolsDragOY + (e.clientY - mapToolsDragSY)
-  nx = Math.max(0, Math.min(nx, wr.width - dw))
-  ny = Math.max(0, Math.min(ny, wr.height - dh))
-  mapToolsFloatPos.value = { x: nx, y: ny }
+  const maxY = Math.max(pad, wih - dh - pad)
+  ny = Math.min(Math.max(pad, ny), maxY)
+  mapToolsFloatTopPx.value = ny
 }
 
 function endMapToolsDrag(e: PointerEvent) {
@@ -598,6 +762,10 @@ function endMapToolsDrag(e: PointerEvent) {
   } catch {
     /* 已释放 */
   }
+  void nextTick(() => {
+    clampMapToolsFloatInWrap()
+    mapRef.value?.invalidateSize()
+  })
 }
 
 function onMapToolsDragDown(e: PointerEvent) {
@@ -610,12 +778,10 @@ function onMapToolsDragDown(e: PointerEvent) {
   if (!wrap || !dock) return
   const wr = wrap.getBoundingClientRect()
   const dr = dock.getBoundingClientRect()
-  if (mapToolsFloatPos.value == null) {
-    mapToolsFloatPos.value = { x: dr.left - wr.left, y: dr.top - wr.top }
+  if (mapToolsFloatTopPx.value == null) {
+    mapToolsFloatTopPx.value = dr.top - wr.top
   }
-  mapToolsDragOX = mapToolsFloatPos.value.x
-  mapToolsDragOY = mapToolsFloatPos.value.y
-  mapToolsDragSX = e.clientX
+  mapToolsDragOY = mapToolsFloatTopPx.value
   mapToolsDragSY = e.clientY
   mapToolsDragPid = e.pointerId
   mapToolsDragSession = true
@@ -635,6 +801,22 @@ function teardownMapToolsDragListeners() {
   window.removeEventListener('pointercancel', endMapToolsDrag, true)
   mapToolsDragSession = false
   mapToolsDragPid = null
+}
+
+/** 右侧上下拖动：仅钳制垂直方向，保证完整落在地图容器内 */
+function clampMapToolsFloatInWrap() {
+  const wrap = mapWrapRef.value
+  const dock = mapToolsFloatRef.value
+  if (!wrap || !dock) return
+  const pad = 8
+  const wih = wrap.clientHeight
+  const dh = dock.offsetHeight
+  if (dh <= 0) return
+  if (mapToolsFloatTopPx.value != null) {
+    const maxY = Math.max(pad, wih - dh - pad)
+    const y = Math.min(Math.max(pad, mapToolsFloatTopPx.value), maxY)
+    if (y !== mapToolsFloatTopPx.value) mapToolsFloatTopPx.value = y
+  }
 }
 const nearestWarehouseBusy = ref(false)
 const geoNearestToastVisible = ref(false)
@@ -790,17 +972,31 @@ const emapProvinceFilter = ref('')
 const emapMapSearchText = ref('')
 const emapSearchFeedback = ref('')
 
-const mapProvinceOptions = computed(() => {
-  const set = new Set<string>()
-  for (const p of allWarehousePoints.value) {
-    const pr = provinceFromRow(p.raw).trim()
-    if (pr) set.add(pr)
-  }
-  for (const p of allSmelterPoints.value) {
-    const pr = provinceFromRow(p.raw).trim()
-    if (pr) set.add(pr)
-  }
-  return [...set].sort((a, b) => a.localeCompare(b, 'zh-CN'))
+/** 与高德类似：按点位名称匹配，下拉选择 */
+const EMAP_POINT_SEARCH_MAX_RESULTS = 50
+const emapPointSearchOpen = ref(false)
+const emapPointSearchActiveIdx = ref(0)
+let emapPointSearchBlurTimer: ReturnType<typeof setTimeout> | null = null
+
+function scoreEmapPointTitleMatch(title: string, qLower: string): number {
+  const t = title.trim().toLowerCase()
+  if (!qLower || !t) return 0
+  if (t === qLower) return 1000
+  if (t.startsWith(qLower)) return 800
+  if (t.includes(qLower)) return 400
+  return 0
+}
+
+const emapPointSearchCandidates = computed(() => {
+  const q = emapMapSearchText.value.trim().toLowerCase()
+  if (!q) return []
+  const pool = [...allWarehousePoints.value, ...allSmelterPoints.value]
+  return pool
+    .map((p) => ({ p, s: scoreEmapPointTitleMatch(p.title, q) }))
+    .filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s || a.p.title.localeCompare(b.p.title, 'zh-CN'))
+    .slice(0, EMAP_POINT_SEARCH_MAX_RESULTS)
+    .map((x) => x.p)
 })
 
 let resizeObs: ResizeObserver | null = null
@@ -933,36 +1129,95 @@ function bindMarkerProvinceHover(marker: L.Marker, p: MapPoint) {
   })
 }
 
+function scrollEmapPointSearchActiveIntoView() {
+  const idx = emapPointSearchActiveIdx.value
+  document.getElementById(`emap-point-search-${idx}`)?.scrollIntoView({ block: 'nearest' })
+}
+
+function onEmapPointSearchFocus() {
+  if (emapPointSearchBlurTimer != null) {
+    clearTimeout(emapPointSearchBlurTimer)
+    emapPointSearchBlurTimer = null
+  }
+  if (emapMapSearchText.value.trim()) {
+    emapPointSearchOpen.value = true
+    emapPointSearchActiveIdx.value = 0
+  }
+}
+
+function onEmapPointSearchBlur() {
+  emapPointSearchBlurTimer = setTimeout(() => {
+    emapPointSearchOpen.value = false
+    emapPointSearchBlurTimer = null
+  }, 180)
+}
+
+function onEmapPointSearchInput() {
+  const q = emapMapSearchText.value.trim()
+  emapPointSearchActiveIdx.value = 0
+  if (q) emapPointSearchOpen.value = true
+  else emapPointSearchOpen.value = false
+}
+
+function onEmapPointSearchKeyArrow(dir: 'up' | 'down') {
+  if (!emapPointSearchOpen.value || !emapMapSearchText.value.trim()) return
+  const list = emapPointSearchCandidates.value
+  if (!list.length) return
+  let i = emapPointSearchActiveIdx.value
+  if (i < 0 || i >= list.length) i = 0
+  if (dir === 'down') i = Math.min(list.length - 1, i + 1)
+  else i = Math.max(0, i - 1)
+  emapPointSearchActiveIdx.value = i
+  void nextTick(() => scrollEmapPointSearchActiveIntoView())
+}
+
+function focusMapPointFromSearch(p: MapPoint) {
+  const map = mapRef.value
+  if (!map) {
+    emapSearchFeedback.value = '地图尚未就绪'
+    return
+  }
+  const nMatch = emapPointSearchCandidates.value.length
+  const zoom = Math.max(map.getZoom(), 11)
+  map.setView([p.lat, p.lng], zoom, { animate: true })
+  openMarkerPopupNear(p.lat, p.lng)
+  if (p.kind === 'warehouse') {
+    selectedWarehouse.value = p
+    forecastError.value = ''
+    closeForecastModal()
+    void runComparisonForWarehouse(p)
+  }
+  emapSearchFeedback.value =
+    nMatch > 1 ? `已选择：${p.title}（${nMatch} 处名称匹配，可继续输入缩小）` : `已定位：${p.title}`
+  if (emapPointSearchBlurTimer != null) {
+    clearTimeout(emapPointSearchBlurTimer)
+    emapPointSearchBlurTimer = null
+  }
+  emapPointSearchOpen.value = false
+  emapPointSearchActiveIdx.value = 0
+}
+
 function runEmapPointSearch() {
   const map = mapRef.value
-  const q = emapMapSearchText.value.trim().toLowerCase()
+  const q = emapMapSearchText.value.trim()
   emapSearchFeedback.value = ''
   if (!map) {
     emapSearchFeedback.value = '地图尚未就绪'
     return
   }
   if (!q) {
-    emapSearchFeedback.value = '请输入关键词'
+    emapSearchFeedback.value = '请输入名称'
     return
   }
-  const pool = [...allWarehousePoints.value, ...allSmelterPoints.value]
-  const candidates = pool.filter(
-    (p) =>
-      p.title.toLowerCase().includes(q) ||
-      p.subtitle.toLowerCase().includes(q) ||
-      provinceFromRow(p.raw).toLowerCase().includes(q),
-  )
-  if (!candidates.length) {
+  const list = emapPointSearchCandidates.value
+  if (!list.length) {
     emapSearchFeedback.value = '未匹配到库房或冶炼厂'
+    emapPointSearchOpen.value = true
     return
   }
-  const exact = candidates.find((p) => p.title.toLowerCase() === q)
-  const pick = exact ?? candidates[0]!
-  const zoom = Math.max(map.getZoom(), 11)
-  map.setView([pick.lat, pick.lng], zoom, { animate: true })
-  openMarkerPopupNear(pick.lat, pick.lng)
-  emapSearchFeedback.value =
-    candidates.length > 1 ? `共 ${candidates.length} 处匹配，已定位第一处；可改关键词缩小范围` : `已定位：${pick.title}`
+  let i = emapPointSearchActiveIdx.value
+  if (i < 0 || i >= list.length) i = 0
+  focusMapPointFromSearch(list[i]!)
 }
 
 /** 仅允许安全子集，防止样式注入 */
@@ -1054,6 +1309,7 @@ function initMap() {
   if (mapWrapRef.value) {
     resizeObs = new ResizeObserver(() => {
       map.invalidateSize()
+      clampMapToolsFloatInWrap()
     })
     resizeObs.observe(mapWrapRef.value)
   }
@@ -1207,6 +1463,10 @@ function refreshAllMarkerVisualState() {
   const selId = sel?.kind === 'warehouse' ? sel.id : null
   const validSelId = selId && warehouseMarkerById.has(selId) ? selId : null
   const filterOn = Boolean(emapProvinceFilter.value.trim())
+  const selMatchesProvinceFilter =
+    sel?.kind === 'warehouse' &&
+    filterOn &&
+    provincesRoughlyEqual(provinceFromRow(sel.raw), emapProvinceFilter.value)
 
   for (const p of allWarehousePoints.value) {
     const m = warehouseMarkerById.get(p.id)
@@ -1218,7 +1478,12 @@ function refreshAllMarkerVisualState() {
         const ok = provincesRoughlyEqual(provinceFromRow(p.raw), emapProvinceFilter.value)
         if (!ok) dimmed = true
       }
-      if (!dimmed && validSelId && validSelId !== p.id) dimmed = true
+      // 按省筛选时：点击省外仓库不再把省内其它仓库压暗（省外仍按筛选规则变淡）
+      if (!dimmed && validSelId && validSelId !== p.id) {
+        const pInFilterProvince =
+          filterOn && provincesRoughlyEqual(provinceFromRow(p.raw), emapProvinceFilter.value)
+        if (!(pInFilterProvince && !selMatchesProvinceFilter)) dimmed = true
+      }
     }
     m.setIcon(warehouseIcon(p.pinColor ?? DEFAULT_WAREHOUSE_COLOR, dimmed))
   }
@@ -1239,29 +1504,68 @@ watch(selectedWarehouse, () => {
   refreshAllMarkerVisualState()
 })
 
-/** 按省筛选选中后，地图飞到该省所有库房+冶炼厂范围 */
-function fitMapToProvinceSelection() {
+/** 从阿里云 DataV 加载省界并绘制红色轮廓 */
+async function refreshProvinceOutlineLayer() {
+  const map = mapRef.value
+  if (provinceOutlineLayerRef.value && map) {
+    map.removeLayer(provinceOutlineLayerRef.value)
+    provinceOutlineLayerRef.value = null
+  }
+  const pr = emapProvinceFilter.value.trim()
+  if (!map || !pr) return
+  const adcode = emapProvinceFilterToAdcode(pr)
+  if (!adcode) return
+  const url = `https://geo.datav.aliyun.com/areas_v3/bound/${adcode}_full.json`
+  try {
+    const { data } = await axios.get(url, { timeout: 22000 })
+    const layer = L.geoJSON(data as never, {
+      style: {
+        color: '#dc2626',
+        weight: 3,
+        opacity: 0.95,
+        fillColor: '#dc2626',
+        fillOpacity: 0.06,
+      },
+      interactive: false,
+    })
+    layer.addTo(map)
+    provinceOutlineLayerRef.value = layer
+  } catch (e) {
+    console.warn('[emap] 省界轮廓加载失败（需可访问 geo.datav.aliyun.com）', pr, e)
+  }
+}
+
+/** 省界轮廓 ∪ 该省点位，一起 fitBounds */
+function fitViewToProvinceFilter() {
   const map = mapRef.value
   const pr = emapProvinceFilter.value.trim()
   if (!map || !pr) return
-  const inProv: MapPoint[] = []
+  const bounds = L.latLngBounds([])
+  const outline = provinceOutlineLayerRef.value
+  if (outline) {
+    const ob = outline.getBounds()
+    if (ob.isValid()) bounds.extend(ob)
+  }
   for (const p of allWarehousePoints.value) {
-    if (provincesRoughlyEqual(provinceFromRow(p.raw), pr)) inProv.push(p)
+    if (provincesRoughlyEqual(provinceFromRow(p.raw), pr)) bounds.extend([p.lat, p.lng])
   }
   for (const p of allSmelterPoints.value) {
-    if (provincesRoughlyEqual(provinceFromRow(p.raw), pr)) inProv.push(p)
+    if (provincesRoughlyEqual(provinceFromRow(p.raw), pr)) bounds.extend([p.lat, p.lng])
   }
-  if (!inProv.length) return
-  const bounds = L.latLngBounds([])
-  for (const p of inProv) bounds.extend([p.lat, p.lng])
   if (!bounds.isValid()) return
-  map.fitBounds(bounds.pad(0.12), { maxZoom: 14, animate: true })
+  const maxZoom = outline ? 10 : 14
+  map.fitBounds(bounds.pad(0.12), { maxZoom, animate: true })
 }
 
 watch(emapProvinceFilter, () => {
   hoverProvinceLiftId.value = null
   refreshAllMarkerVisualState()
-  void nextTick(() => fitMapToProvinceSelection())
+  void (async () => {
+    await refreshProvinceOutlineLayer()
+    await nextTick()
+    fitViewToProvinceFilter()
+    void nextTick(() => clampMapToolsFloatInWrap())
+  })()
 })
 
 function smelterIcon(dimmed = false): L.DivIcon {
@@ -2394,6 +2698,10 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  if (emapPointSearchBlurTimer != null) {
+    clearTimeout(emapPointSearchBlurTimer)
+    emapPointSearchBlurTimer = null
+  }
   teardownMapToolsDragListeners()
   document.removeEventListener('fullscreenchange', onEmapFullscreenChange)
   document.removeEventListener('webkitfullscreenchange', onEmapFullscreenChange)
@@ -2721,6 +3029,8 @@ onBeforeUnmount(() => {
   gap: 0;
   pointer-events: auto;
   touch-action: none;
+  max-width: calc(100% - 10px);
+  box-sizing: border-box;
 }
 
 .emap-map-tools-float--default {
@@ -2767,8 +3077,10 @@ onBeforeUnmount(() => {
 
 .emap-map-tools {
   position: relative;
-  min-width: 200px;
-  max-width: 268px;
+  width: min(268px, 100%);
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
   background: rgba(6, 18, 40, 0.9);
   border: 1px solid rgba(34, 211, 238, 0.28);
   border-radius: 12px;
@@ -2872,6 +3184,11 @@ onBeforeUnmount(() => {
   margin-bottom: 4px;
 }
 
+.emap-tool-search-wrap {
+  position: relative;
+  z-index: 2;
+}
+
 .emap-tool-search-row {
   display: flex;
   align-items: center;
@@ -2880,6 +3197,79 @@ onBeforeUnmount(() => {
 
 .emap-tool-search-row .form-control {
   min-width: 0;
+}
+
+.emap-point-search-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  margin-top: 4px;
+  max-height: 240px;
+  overflow-y: auto;
+  background: rgba(6, 18, 40, 0.98);
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  z-index: 4;
+}
+
+.emap-point-search-item {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.12);
+  background: transparent;
+  color: #e2e8f0;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.emap-point-search-item:last-child {
+  border-bottom: none;
+}
+
+.emap-point-search-item:hover,
+.emap-point-search-item--active {
+  background: rgba(59, 130, 246, 0.35);
+}
+
+.emap-point-search-item-title {
+  font-weight: 600;
+  color: #f1f5f9;
+}
+
+.emap-point-search-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 10px;
+  color: #94a3b8;
+}
+
+.emap-point-search-item-kind {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(34, 211, 238, 0.15);
+  color: #7dd3fc;
+}
+
+.emap-point-search-item-sub {
+  min-width: 0;
+  word-break: break-all;
+}
+
+.emap-point-search-empty {
+  padding: 10px;
+  font-size: 11px;
+  color: #94a3b8;
 }
 
 .emap-tool-hint {
