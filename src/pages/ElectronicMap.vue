@@ -217,7 +217,7 @@
                 <th class="emap-cmp-col-smelter">冶炼厂名称</th>
                 <th class="emap-cmp-col-money">单价</th>
                 <th class="emap-cmp-col-money">总回收价</th>
-                <th class="emap-cmp-col-money">估算运费</th>
+                <th class="emap-cmp-col-money">总运费</th>
                 <th class="emap-cmp-col-money">利润</th>
               </tr>
             </thead>
@@ -232,7 +232,7 @@
                 <td class="emap-cmp-col-smelter">{{ row.smelter }}</td>
                 <td>¥ {{ formatNum(row.unitPrice) }}</td>
                 <td>¥ {{ formatNum(row.totalRecovery) }}</td>
-                <td>¥ {{ formatNum(row.freightPerTon) }}</td>
+                <td>¥ {{ formatNum(row.totalFreight) }}</td>
                 <td class="text-success fw-semibold">¥ {{ formatNum(row.netProfit) }}</td>
               </tr>
             </tbody>
@@ -350,7 +350,8 @@ type ComparisonRankItem = {
   unitPrice: number
   netProfit: number
   totalRecovery: number
-  freightPerTon: number
+  /** 后端「总运费」；无明细时由旧逻辑推算 */
+  totalFreight: number
   qtySum: number
 }
 
@@ -372,6 +373,8 @@ const GEO_NEAREST_TOAST_MS = 10 * 60 * 1000
 /** 未确认比价条件时中央提示自动关闭时间 */
 const COMPARISON_PREREQ_TOAST_MS = 10_000
 const EMAP_TOOLBAR_COLLAPSED_KEY = 'emap.toolbar.collapsed'
+/** 回收品类勾选与吨数：跨页面/刷新保留 */
+const EMAP_CATEGORY_PREFS_KEY = 'emap.categoryPrefs.v1'
 
 function readToolbarCollapsed(): boolean {
   try {
@@ -425,22 +428,6 @@ function toCanonicalCategoryName(name: string): string {
   return aliasMap[base] ?? base
 }
 
-function ensureCategoryPrefsForList(list: TlCategoryRow[]) {
-  for (const c of list) {
-    if (categoryPrefs[c.id] === undefined) {
-      categoryPrefs[c.id] = { selected: false, tons: '0' }
-    }
-  }
-}
-
-watch(
-  categories,
-  (list) => {
-    ensureCategoryPrefsForList(list)
-  },
-  { deep: true, immediate: true },
-)
-
 watch(toolbarCollapsed, async () => {
   await nextTick()
   mapRef.value?.invalidateSize()
@@ -472,6 +459,73 @@ const selectedWarehouse = ref<MapPoint | null>(null)
 const comparisonType = ref<'base' | 'tax3'>('base')
 /** 与品类 id 对应：默认全选、吨数默认 1（与智能比价一致可改） */
 const categoryPrefs = reactive<Record<number, { selected: boolean; tons: string }>>({})
+let categoryPrefsHydrating = false
+
+function ensureCategoryPrefsForList(list: TlCategoryRow[]) {
+  for (const c of list) {
+    if (categoryPrefs[c.id] === undefined) {
+      categoryPrefs[c.id] = { selected: false, tons: '0' }
+    }
+  }
+}
+
+function persistCategoryPrefsSnapshot() {
+  const list = categories.value
+  if (!list.length) return
+  const snap: Record<string, { selected: boolean; tons: string }> = {}
+  for (const c of list) {
+    const pref = categoryPrefs[c.id]
+    if (pref) {
+      snap[String(c.id)] = { selected: !!pref.selected, tons: String(pref.tons ?? '0') }
+    }
+  }
+  try {
+    localStorage.setItem(EMAP_CATEGORY_PREFS_KEY, JSON.stringify(snap))
+  } catch {
+    /* 隐私模式 / 配额 */
+  }
+}
+
+function applyCategoryPrefsFromStorage(list: TlCategoryRow[]) {
+  if (!list.length) return
+  let raw: unknown
+  try {
+    raw = JSON.parse(localStorage.getItem(EMAP_CATEGORY_PREFS_KEY) || 'null')
+  } catch {
+    return
+  }
+  if (!raw || typeof raw !== 'object') return
+  const obj = raw as Record<string, unknown>
+  for (const c of list) {
+    const entry = obj[String(c.id)]
+    if (!entry || typeof entry !== 'object') continue
+    const e = entry as Record<string, unknown>
+    const tonsRaw = e.tons
+    const tons = tonsRaw != null && tonsRaw !== '' ? String(tonsRaw) : '0'
+    categoryPrefs[c.id] = { selected: e.selected === true, tons }
+  }
+}
+
+watch(
+  categories,
+  (list) => {
+    categoryPrefsHydrating = true
+    try {
+      ensureCategoryPrefsForList(list)
+      applyCategoryPrefsFromStorage(list)
+    } finally {
+      categoryPrefsHydrating = false
+    }
+    persistCategoryPrefsSnapshot()
+  },
+  { deep: true, immediate: true },
+)
+
+watch(categoryPrefs, () => {
+  if (categoryPrefsHydrating) return
+  persistCategoryPrefsSnapshot()
+}, { deep: true })
+
 const confirmedCategoryIds = ref<number[]>([])
 const confirmedTotalTons = ref(0)
 const confirmedPriceMode = ref<'base' | 'tax3'>('base')
@@ -1001,7 +1055,34 @@ function pointAlongFrac(
   return [lat1 + (lat2 - lat1) * t, lng1 + (lng2 - lng1) * t]
 }
 
-function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
+/** 冶炼厂利润排行：按比价类型取后端已算好的利润 */
+function pickProfitFromSmelterRankRow(
+  row: Record<string, unknown>,
+  priceMode: 'base' | 'tax3',
+): number {
+  const nested = row['最优价口径合计']
+  const nestObj =
+    nested && typeof nested === 'object' && !Array.isArray(nested)
+      ? (nested as Record<string, unknown>)
+      : null
+  if (priceMode === 'tax3') {
+    const n =
+      pickNumber(row, ['利润_含3%合计', '利润_含3%']) ??
+      (nestObj ? pickNumber(nestObj, ['3pct', 'tax3']) : null) ??
+      pickNumber(row, ['利润'])
+    return n ?? 0
+  }
+  const n =
+    pickNumber(row, ['利润_基准合计', '利润_基准']) ??
+    (nestObj ? pickNumber(nestObj, ['base']) : null) ??
+    pickNumber(row, ['利润'])
+  return n ?? 0
+}
+
+function parseSmelterProfitRankArray(
+  arr: unknown,
+  priceMode: 'base' | 'tax3',
+): ComparisonRankItem[] {
   if (!Array.isArray(arr)) return []
   const out: ComparisonRankItem[] = []
   let fallback = 0
@@ -1020,10 +1101,10 @@ function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
     if (!smelter) continue
     fallback += 1
     const rank = pickNumber(row, ['rank', '名次', '排序', '排行', '排名']) ?? fallback
-    const netProfit =
-      pickNumber(row, ['净收益', 'profit', '净利润', '收益', 'net_profit', '总利润', '利润']) ?? 0
+    const netProfit = pickProfitFromSmelterRankRow(row, priceMode)
     const totalRecovery =
       pickNumber(row, [
+        '总价合计',
         '总回收价',
         '回收额',
         'totalRecovery',
@@ -1031,15 +1112,8 @@ function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
         '物料总价',
         'total_recovery',
       ]) ?? 0
-    const freightPerTon =
-      pickNumber(row, [
-        '估算运费',
-        '运费',
-        '运费单价',
-        'freightPerTon',
-        'freight_per_ton',
-        '运费每吨',
-      ]) ?? 0
+    const totalFreight =
+      pickNumber(row, ['总运费合计', '总运费', '估算运费', '运费合计']) ?? 0
     const qtySum = pickNumber(row, ['吨数', 'quantity', 'qtySum', 'qty', '需求吨数']) ?? 0
     const unitPriceRaw = pickNumber(row, [
       '单价',
@@ -1057,11 +1131,62 @@ function parseSmelterProfitRankArray(arr: unknown): ComparisonRankItem[] {
       unitPrice: toDisplayNum(unitPrice),
       netProfit: toDisplayNum(netProfit),
       totalRecovery: toDisplayNum(totalRecovery),
-      freightPerTon: toDisplayNum(freightPerTon),
+      totalFreight: toDisplayNum(totalFreight),
       qtySum: toDisplayNum(qtySum),
     })
   }
   return out.sort((a, b) => a.rank - b.rank)
+}
+
+/** 用接口 data 明细行的单价/总价/总运费按冶炼厂合并到排行行 */
+function mergeComparisonRanksWithDetailRows(
+  ranks: ComparisonRankItem[],
+  detailRows: Record<string, unknown>[],
+): ComparisonRankItem[] {
+  if (!detailRows.length) return ranks
+  return ranks.map((r) => {
+    const rows = detailRows.filter((row) => {
+      const name = pickStr(row, [
+        '冶炼厂',
+        'smelter',
+        'smelter_name',
+        '冶炼厂名',
+        'factory_name',
+        'name',
+      ])
+      if (!name) return false
+      return name === r.smelter || name.includes(r.smelter) || r.smelter.includes(name)
+    })
+    if (!rows.length) return r
+    let totalRecovery = 0
+    let totalFreight = 0
+    let qtySum = 0
+    let unitNum = 0
+    let unitDen = 0
+    for (const row of rows) {
+      const qty = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数', 'weight']) ?? 0
+      const up = pickNumber(row, ['单价', '基准价', '含3%税价', '报价', 'unit_price', '最优价'])
+      const tot = pickNumber(row, ['总价', '报价金额', '物料总价', 'total_recovery', 'material_sum'])
+      const tf = pickNumber(row, ['总运费', '运费合计'])
+      if (tot != null && Number.isFinite(tot)) totalRecovery += tot
+      else if (up != null && qty > 0) totalRecovery += up * qty
+      if (tf != null && Number.isFinite(tf)) totalFreight += tf
+      qtySum += Math.max(0, qty)
+      if (up != null && qty > 0) {
+        unitNum += up * qty
+        unitDen += qty
+      }
+    }
+    const unitPrice =
+      unitDen > 0 ? unitNum / unitDen : (pickNumber(rows[0]!, ['单价', '基准价', '报价']) ?? 0)
+    return {
+      ...r,
+      unitPrice: toDisplayNum(unitPrice),
+      totalRecovery: toDisplayNum(totalRecovery),
+      totalFreight: toDisplayNum(totalFreight),
+      qtySum: toDisplayNum(qtySum),
+    }
+  })
 }
 
 function pickComparisonPayload(raw: Record<string, unknown>): Record<string, unknown> | null {
@@ -1093,7 +1218,10 @@ function walkObjectArraysDeep(input: unknown, depth = 0): Record<string, unknown
   return out
 }
 
-function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem[] {
+function parseRankRowsLoose(
+  rows: Record<string, unknown>[],
+  priceMode: 'base' | 'tax3',
+): ComparisonRankItem[] {
   const out: ComparisonRankItem[] = []
   let fallback = 0
   for (const row of rows) {
@@ -1106,17 +1234,26 @@ function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem
       'factory_name',
       'name',
     ])
-    const hasProfitLike =
-      pickNumber(row, ['利润', '净收益', '净利润', 'profit', 'net_profit', '总利润']) != null
+    const netProfitRaw =
+      priceMode === 'tax3'
+        ? (pickNumber(row, ['利润_含3%', '利润']) ?? 0)
+        : (pickNumber(row, ['利润_基准', '利润']) ?? 0)
+    const hasProfitLike = pickNumber(row, [
+      '利润',
+      '利润_基准',
+      '利润_含3%',
+      '净收益',
+      'profit',
+    ]) != null
     if (!smelter || !hasProfitLike) continue
     fallback += 1
     const rank = pickNumber(row, ['排名', '排行', '排序', 'rank', '名次']) ?? fallback
-    const netProfit =
-      pickNumber(row, ['利润', '净收益', '净利润', 'profit', 'net_profit', '总利润']) ?? 0
+    const netProfit = netProfitRaw
     const totalRecovery =
-      pickNumber(row, ['总回收价', '回收额', '物料总价', 'total_recovery', 'material_sum']) ?? 0
-    const freightPerTon =
-      pickNumber(row, ['估算运费', '运费单价', '运费/吨', 'freight_per_ton', 'freight']) ?? 0
+      pickNumber(row, ['总价', '总回收价', '回收额', '物料总价', 'total_recovery', 'material_sum']) ?? 0
+    const totalFreight =
+      pickNumber(row, ['总运费', '运费合计', '估算运费', '运费单价', '运费/吨', 'freight_per_ton', 'freight']) ??
+      0
     const qtySum = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数']) ?? 0
     const unitPriceRaw = pickNumber(row, [
       '单价',
@@ -1134,7 +1271,7 @@ function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem
       unitPrice: toDisplayNum(unitPrice),
       netProfit: toDisplayNum(netProfit),
       totalRecovery: toDisplayNum(totalRecovery),
-      freightPerTon: toDisplayNum(freightPerTon),
+      totalFreight: toDisplayNum(totalFreight),
       qtySum: toDisplayNum(qtySum),
     })
   }
@@ -1144,17 +1281,21 @@ function parseRankRowsLoose(rows: Record<string, unknown>[]): ComparisonRankItem
 function rankingsFromComparisonResponse(
   raw: Record<string, unknown>,
   detailRows: Record<string, unknown>[],
+  priceMode: 'base' | 'tax3',
 ): ComparisonRankItem[] {
   const payload = pickComparisonPayload(raw)
   const fromApi = parseSmelterProfitRankArray(
     raw['冶炼厂利润排行'] ?? payload?.['冶炼厂利润排行'] ?? payload?.['smelter_profit_rank'],
+    priceMode,
   )
-  if (fromApi.length) return rerankSequentially(fromApi)
+  if (fromApi.length) {
+    return rerankSequentially(mergeComparisonRanksWithDetailRows(fromApi, detailRows))
+  }
   for (const rows of walkObjectArraysDeep(payload ?? raw)) {
-    const parsed = parseRankRowsLoose(rows)
+    const parsed = parseRankRowsLoose(rows, priceMode)
     if (parsed.length) return rerankSequentially(parsed)
   }
-  return aggregateComparisonRows(detailRows)
+  return aggregateComparisonRows(detailRows, priceMode)
 }
 
 /** 后端若已带 rank，仍按排序重编号，避免间断 */
@@ -1163,41 +1304,74 @@ function rerankSequentially(items: ComparisonRankItem[]): ComparisonRankItem[] {
   return sorted.map((x, i) => ({ ...x, rank: i + 1 }))
 }
 
-function aggregateComparisonRows(rows: Record<string, unknown>[]): ComparisonRankItem[] {
+function aggregateComparisonRows(
+  rows: Record<string, unknown>[],
+  priceMode: 'base' | 'tax3',
+): ComparisonRankItem[] {
   const grouped = new Map<
     string,
-    { smelter: string; materialSum: number; freightSum: number; freightCount: number; qtySum: number }
+    {
+      smelter: string
+      materialSum: number
+      freightSum: number
+      freightCount: number
+      totalFreightSum: number
+      qtySum: number
+    }
   >()
   for (const row of rows) {
     const smelter =
       pickStr(row, ['smelter_name', '冶炼厂', '冶炼厂名', 'smelter', 'factory_name']) || '未知冶炼厂'
     const unitPrice =
-      pickNumber(row, ['unit_price', '最优价', '价格', 'price', 'base_price', '不含税价', '3pct_price']) ??
+      pickNumber(row, ['unit_price', '单价', '最优价', '价格', 'price', 'base_price', '不含税价', '3pct_price']) ??
       0
     const freight =
-      pickNumber(row, ['freight_per_ton', '运费', '运费单价', 'freight', '运费每吨']) ?? 0
+      pickNumber(row, ['freight_per_ton', '运费单价', 'freight', '运费每吨']) ?? 0
+    const lineTotalFreight = pickNumber(row, ['总运费', '运费合计'])
     const qty = pickNumber(row, ['quantity', '吨数', '数量', 'qty', 'weight', '需求吨数']) ?? 1
     const key = smelter
     if (!grouped.has(key)) {
-      grouped.set(key, { smelter, materialSum: 0, freightSum: 0, freightCount: 0, qtySum: 0 })
+      grouped.set(key, {
+        smelter,
+        materialSum: 0,
+        freightSum: 0,
+        freightCount: 0,
+        totalFreightSum: 0,
+        qtySum: 0,
+      })
     }
     const g = grouped.get(key)!
     g.materialSum += unitPrice * Math.max(0, qty)
     g.freightSum += freight
     g.freightCount += 1
+    if (lineTotalFreight != null && Number.isFinite(lineTotalFreight)) g.totalFreightSum += lineTotalFreight
     g.qtySum += Math.max(0, qty)
   }
   return [...grouped.values()]
     .map((g) => {
-      const freightPerTon = g.freightCount > 0 ? g.freightSum / g.freightCount : 0
-      const netProfit = g.materialSum - freightPerTon * g.qtySum
+      const avgFreightPerTon = g.freightCount > 0 ? g.freightSum / g.freightCount : 0
+      const totalFreightFromLine =
+        g.totalFreightSum > 0 ? g.totalFreightSum : avgFreightPerTon * g.qtySum
+      let netProfit = g.materialSum - totalFreightFromLine
+      const sample = rows.find(
+        (r) =>
+          (pickStr(r, ['smelter_name', '冶炼厂', '冶炼厂名', 'smelter', 'factory_name']) || '未知冶炼厂') ===
+          g.smelter,
+      )
+      if (sample) {
+        const backendProfit =
+          priceMode === 'tax3'
+            ? pickNumber(sample, ['利润_含3%', '利润'])
+            : pickNumber(sample, ['利润_基准', '利润'])
+        if (backendProfit != null && Number.isFinite(backendProfit)) netProfit = backendProfit
+      }
       const unitPrice = g.qtySum > 0 ? g.materialSum / g.qtySum : 0
       return {
         smelter: g.smelter,
         unitPrice: toDisplayNum(unitPrice),
         netProfit: toDisplayNum(netProfit),
         totalRecovery: toDisplayNum(g.materialSum),
-        freightPerTon: toDisplayNum(freightPerTon),
+        totalFreight: toDisplayNum(totalFreightFromLine),
         qtySum: toDisplayNum(g.qtySum),
       }
     })
@@ -1283,7 +1457,7 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
     })
       .setLatLng([smelter.lat, smelter.lng])
       .setContent(
-        `#${row.rank} ${escapeHtml(row.smelter)}<br/>净收益: ${formatNum(row.netProfit)}<br/>回收额: ${formatNum(row.totalRecovery)}<br/>运费/吨: ${formatNum(row.freightPerTon)}`,
+        `#${row.rank} ${escapeHtml(row.smelter)}<br/>利润: ${formatNum(row.netProfit)}<br/>总价: ${formatNum(row.totalRecovery)}<br/>总运费: ${formatNum(row.totalFreight)}`,
       )
       .addTo(tipLayer)
   }
@@ -1295,10 +1469,11 @@ type RunComparisonOptions = {
 }
 
 async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunComparisonOptions) {
-  if (!confirmedCategoryIds.value.length || confirmedTotalTons.value <= 0) {
+  const { ids: categoryIds, totalTons } = getSelectedCategoryPayload()
+  if (!categoryIds.length || totalTons <= 0) {
     if (options?.announceMissingPrereq) {
       showComparisonPrereqToast(
-        '请先在上方「回收品类」中勾选品类、填写吨数（至少一项大于 0），并点击「确定」后再进行比价。',
+        '请先在上方「回收品类」中勾选品类并填写大于 0 的吨数，再进行比价。',
       )
     }
     return
@@ -1317,9 +1492,9 @@ async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunCompa
     const body = buildSmartComparisonBody(
       whId,
       smelterIds,
-      confirmedCategoryIds.value,
-      confirmedTotalTons.value,
-      confirmedPriceMode.value,
+      categoryIds,
+      totalTons,
+      comparisonType.value,
     )
     const raw = await postTlGetComparison(body)
     const payload = pickComparisonPayload(raw)
@@ -1327,7 +1502,7 @@ async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunCompa
     lastComparisonSortKey.value =
       sortKey != null && String(sortKey).trim() !== '' ? String(sortKey).trim() : ''
     const detailRows = tlUnwrapComparisonDetails(raw)
-    const ranks = rankingsFromComparisonResponse(raw, detailRows)
+    const ranks = rankingsFromComparisonResponse(raw, detailRows, comparisonType.value)
     comparisonRanks.value = ranks
     if (ranks.length) {
       renderComparisonOverlay(warehouse, ranks)
