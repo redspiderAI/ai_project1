@@ -44,26 +44,16 @@
             <thead>
               <tr>
                 <th width="40"><input type="checkbox" :checked="isAllPreviewSelected" @change="toggleSelectAllPreview" /></th>
-                <th>大区经理</th>
-                <th>冶炼厂</th>
-                <th>仓库</th>
-                <th>送货日期</th>
-                <th>品种</th>
-                <th>重量</th>
+                <th v-for="col in previewColumns" :key="col">{{ col }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(row, idx) in previewData" :key="idx">
                 <td><input type="checkbox" v-model="selectedPreviewRows" :value="idx" /></td>
-                <td>{{ row.regionalManager || '-' }}</td>
-                <td>{{ row.smelter || '-' }}</td>
-                <td>{{ row.warehouse || '-' }}</td>
-                <td>{{ row.deliveryDate || '-' }}</td>
-                <td>{{ row.variety || '-' }}</td>
-                <td>{{ row.weight || '-' }}</td>
+                <td v-for="col in previewColumns" :key="col">{{ row[col] || '-' }}</td>
               </tr>
               <tr v-if="previewData.length === 0">
-                <td :colspan="7" class="empty-data">暂无数据</td>
+                <td :colspan="Math.max(1, 1 + previewColumns.length)" class="empty-data">暂无数据</td>
               </tr>
             </tbody>
           </table>
@@ -87,25 +77,20 @@
             <table class="data-table sample-table">
               <thead>
                 <tr>
-                  <th>大区经理</th>
-                  <th>冶炼厂</th>
-                  <th>仓库</th>
-                  <th>送货日期</th>
-                  <th>品种</th>
-                  <th>重量</th>
+                  <th v-for="col in templateSampleColumns" :key="col">{{ col }}</th>
                 </tr>
               </thead>
               <tbody>
                 <tr v-for="(row, idx) in templateSampleRows" :key="idx">
-                  <td>{{ row.regionalManager || '-' }}</td>
-                  <td>{{ row.smelter || '-' }}</td>
-                  <td>{{ row.warehouse || '-' }}</td>
-                  <td>{{ row.deliveryDate || '-' }}</td>
-                  <td>{{ row.variety || '-' }}</td>
-                  <td>{{ row.weight || '-' }}</td>
+                  <td v-for="col in templateSampleColumns" :key="col">{{ row[col] || '-' }}</td>
                 </tr>
                 <tr v-if="templateSampleRows.length === 0">
-                  <td colspan="6" class="empty-data">未从模板中解析到示例行，请检查网络后刷新页面，或使用「下载模板」查看完整文件</td>
+                  <td
+                    :colspan="Math.max(1, templateSampleColumns.length)"
+                    class="empty-data"
+                  >
+                    未从模板中解析到示例行，请检查网络后刷新页面，或使用「下载模板」查看完整文件
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -433,16 +418,6 @@ interface SummaryRow {
   details: { variety: string; weight: number }[]
 }
 
-interface PreviewRow {
-  regionalManager: string
-  smelter: string
-  warehouse: string
-  deliveryDate: string
-  variety: string
-  weight: string
-  originalIndex: number
-}
-
 interface ApiResponse {
   items: HistoryRecord[]
   total: number
@@ -464,14 +439,16 @@ const selectedRows = ref<string[]>([])
 /** 列表固定每页条数；接口分批拉取后本地分页 */
 const listPageSize = 10
 
-// 预览数据（与 POST …/delivery-history/import 一致：上传整份原文件，字段名 file）
-const previewData = ref<PreviewRow[]>([])
+// 预览数据（与 POST …/delivery-history/import 一致：上传整份原文件，字段名 file；列与 Excel 表头一致）
+const previewColumns = ref<string[]>([])
+const previewData = ref<Record<string, string>[]>([])
 const selectedPreviewRows = ref<number[]>([])
 const previewTotalRows = ref(0)
 const pendingImportFile = ref<File | null>(null)
 
-/** 与下载模板同一接口拉取并解析，用于数据导入页中部展示示例行 */
-const templateSampleRows = ref<PreviewRow[]>([])
+/** 与下载模板同一接口拉取并解析，表头与列顺序与接口返回的 xlsx 一致 */
+const templateSampleColumns = ref<string[]>([])
+const templateSampleRows = ref<Record<string, string>[]>([])
 const templateSampleLoading = ref(false)
 
 
@@ -1012,18 +989,12 @@ const loadTemplateSampleRows = async () => {
   try {
     const ab = await fetchDeliveryHistoryTemplateBuffer()
     const sheetRows = parseWorkbookRowsFromArrayBuffer(ab)
-    const parsed: PreviewRow[] = []
-    let i = 0
-    for (const row of sheetRows) {
-      const pr = rowToPreview(row, i)
-      if (pr) {
-        parsed.push(pr)
-        i++
-      }
-    }
-    templateSampleRows.value = parsed.slice(0, 10)
+    const { columns, rows } = sheetRowsToKeyedRows(sheetRows)
+    templateSampleColumns.value = columns
+    templateSampleRows.value = rows.slice(0, 10)
   } catch (e) {
     console.error('加载模板示例失败', e)
+    templateSampleColumns.value = []
     templateSampleRows.value = []
   } finally {
     templateSampleLoading.value = false
@@ -1049,15 +1020,30 @@ const triggerImport = () => {
   fileInput.value?.click()
 }
 
-function normalizeHeaderKey(h: string): string {
-  return String(h ?? '')
-    .trim()
-    .replace(/\s+/g, '')
-}
-
 function cellToString(v: unknown): string {
   if (v == null || v === '') return ''
   return String(v).trim()
+}
+
+function rowHasAnyCell(row: Record<string, unknown>): boolean {
+  return Object.values(row).some((v) => cellToString(v) !== '')
+}
+
+/** 按首行键顺序生成列与行，保留后端模板全部列 */
+function sheetRowsToKeyedRows(sheetRows: Record<string, unknown>[]): {
+  columns: string[]
+  rows: Record<string, string>[]
+} {
+  if (!sheetRows.length) return { columns: [], rows: [] }
+  const headerOrder = Object.keys(sheetRows[0]!)
+  const rows = sheetRows.filter(rowHasAnyCell).map((row) => {
+    const out: Record<string, string> = {}
+    for (const h of headerOrder) {
+      out[h] = cellToString(row[h])
+    }
+    return out
+  })
+  return { columns: headerOrder, rows }
 }
 
 function parseSheetRows(file: File, ab: ArrayBuffer): Record<string, unknown>[] {
@@ -1072,31 +1058,6 @@ function parseSheetRows(file: File, ab: ArrayBuffer): Record<string, unknown>[] 
   return XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { raw: false, defval: '' })
 }
 
-function rowToPreview(row: Record<string, unknown>, index: number): PreviewRow | null {
-  const keys = Object.keys(row)
-  const get = (name: string) => {
-    const target = normalizeHeaderKey(name)
-    const k = keys.find((x) => normalizeHeaderKey(x) === target)
-    return k ? cellToString(row[k]) : ''
-  }
-  const regionalManager = get('大区经理')
-  const smelter = get('冶炼厂')
-  const warehouse = get('仓库')
-  const deliveryDate = get('送货日期')
-  const variety = get('品种')
-  const weight = get('重量')
-  if (!regionalManager && !warehouse && !deliveryDate && !variety && !weight && !smelter) return null
-  return {
-    regionalManager,
-    smelter,
-    warehouse,
-    deliveryDate,
-    variety,
-    weight,
-    originalIndex: index
-  }
-}
-
 const handleFileSelect = async (event: Event) => {
   const input = event.target as HTMLInputElement
   const file = input.files?.[0]
@@ -1107,24 +1068,20 @@ const handleFileSelect = async (event: Event) => {
   try {
     const ab = await file.arrayBuffer()
     const sheetRows = parseSheetRows(file, ab)
-    const parsed: PreviewRow[] = []
-    let i = 0
-    for (const row of sheetRows) {
-      const pr = rowToPreview(row, i)
-      if (pr) {
-        parsed.push(pr)
-        i++
-      }
-    }
+    const { columns, rows: parsed } = sheetRowsToKeyedRows(sheetRows)
     if (parsed.length === 0) {
-      showError('未解析到数据', ['请确认首行为表头，且包含：大区经理、冶炼厂、仓库、送货日期、品种、重量'])
+      showError('未解析到数据', [
+        '请确认首行为表头，且文件中至少有一行有效数据；列名需与当前下载模板一致。',
+      ])
       pendingImportFile.value = null
+      previewColumns.value = []
       previewData.value = []
       previewTotalRows.value = 0
       selectedPreviewRows.value = []
       return
     }
     pendingImportFile.value = file
+    previewColumns.value = columns
     previewTotalRows.value = parsed.length
     previewData.value = parsed.slice(0, 10)
     selectedPreviewRows.value = previewData.value.map((_, idx) => idx)
@@ -1132,6 +1089,7 @@ const handleFileSelect = async (event: Event) => {
     console.error('解析文件失败', e)
     showError('文件解析失败', ['请使用与模板一致的 .xlsx / .xls / .csv'])
     pendingImportFile.value = null
+    previewColumns.value = []
     previewData.value = []
     previewTotalRows.value = 0
     selectedPreviewRows.value = []
@@ -1149,6 +1107,7 @@ const toggleSelectAllPreview = () => {
 }
 
 const clearPreview = () => {
+  previewColumns.value = []
   previewData.value = []
   selectedPreviewRows.value = []
   previewTotalRows.value = 0
