@@ -1,0 +1,1029 @@
+/** 请求坐标：左上到右下 [x1, y1, x2, y2]（像素） */
+export type BboxXYXY = readonly [number, number, number, number]
+
+/** 接口返回 ROI：[x, y, width, height] */
+export type BboxXYWH = readonly [number, number, number, number]
+
+import { demoLabelForFileName } from './mockDemoFileLabels'
+
+/** 开发时未配置 VITE_API_BASE 时的直连地址（与 .env 中可一致） */
+const DEFAULT_DEV_API_BASE = 'http://111.229.25.160:8002'
+const AI_DETECTION_PREFIX = '/ai-detection'
+
+function baseUrl(): string {
+  const raw = import.meta.env.VITE_API_BASE
+  const trimmed = typeof raw === 'string' ? raw.trim() : ''
+  const proxyTarget = String(import.meta.env.VITE_PROXY_TARGET ?? '').trim()
+  // 生产构建默认与页面同源（/project3/ 与 /ai-detection/ 同 host:80，经 Nginx 反代），避免 :8002 跨域
+  if (import.meta.env.PROD) {
+    return trimmed !== '' ? trimmed.replace(/\/$/, '') : ''
+  }
+  if (trimmed !== '') {
+    return trimmed.replace(/\/$/, '')
+  }
+  if (proxyTarget !== '') {
+    return ''
+  }
+  return DEFAULT_DEV_API_BASE.replace(/\/$/, '')
+}
+
+function apiUrl(path: string): string {
+  return `${baseUrl()}${path}`
+}
+
+function aiDetectionUrl(path: string): string {
+  const normalized = path.startsWith('/') ? path : `/${path}`
+  return apiUrl(`${AI_DETECTION_PREFIX}${normalized}`)
+}
+
+export function resolveApiUrl(path: string): string {
+  if (!path) return ''
+  if (/^https?:\/\//i.test(path)) return path
+  return apiUrl(path.startsWith('/') ? path : `/${path}`)
+}
+
+/** 将代理/网关类错误转成可操作的说明（开发环境 502 多为后端未启动或端口不对） */
+function httpFailMessage(status: number, rawBody: string): string {
+  const t = rawBody?.trim() ?? ''
+  const looksHtml = t.startsWith('<')
+  const detail = !looksHtml && t.length > 0 ? t.slice(0, 300) : ''
+
+  if (status === 502 || status === 503 || status === 504) {
+    const hint =
+      import.meta.env.DEV && !import.meta.env.VITE_API_BASE
+        ? '开发代理未指向可用服务：可在项目根目录 .env 中设置 VITE_API_BASE 为检测服务地址，或调整 VITE_PROXY_TARGET。'
+        : '检测服务暂时不可用或网络异常，请稍后重试；若多次失败请联系管理员确认服务是否在线。'
+    return detail
+      ? `${detail}\n\n${hint}`
+      : `暂时无法连接检测服务（${status}）\n${hint}`
+  }
+
+  if (detail) return detail
+  return `HTTP ${status}`
+}
+
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null && !Array.isArray(x)
+}
+
+const MOCK_HISTORY_KEY = 'ai_detection_mock_history_v1'
+
+function useMockOnly(): boolean {
+  return String(import.meta.env.VITE_USE_MOCK ?? '').trim() === '1'
+}
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
+function randomInt(min: number, max: number): number {
+  return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
+async function waitMs(ms: number, signal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const id = window.setTimeout(resolve, ms)
+    if (!signal) return
+    const onAbort = () => {
+      window.clearTimeout(id)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    if (signal.aborted) return onAbort()
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+function toXYWH(bbox: BboxXYXY): BboxXYWH {
+  const x1 = Math.min(bbox[0], bbox[2])
+  const y1 = Math.min(bbox[1], bbox[3])
+  const x2 = Math.max(bbox[0], bbox[2])
+  const y2 = Math.max(bbox[1], bbox[3])
+  return [x1, y1, Math.max(1, x2 - x1), Math.max(1, y2 - y1)]
+}
+
+function readMockHistory(): DetectionHistoryApiRecord[] {
+  if (typeof window === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(MOCK_HISTORY_KEY)
+    if (!raw) return []
+    const arr = JSON.parse(raw) as unknown
+    if (!Array.isArray(arr)) return []
+    const out: DetectionHistoryApiRecord[] = []
+    for (const row of arr) {
+      if (!isRecord(row)) continue
+      const rec = coerceApiRecord(row)
+      if (rec) out.push(rec)
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+function writeMockHistory(list: DetectionHistoryApiRecord[]): void {
+  if (typeof window === 'undefined') return
+  try {
+    localStorage.setItem(MOCK_HISTORY_KEY, JSON.stringify(list))
+  } catch {
+    // ignore quota/write failures
+  }
+}
+
+type MockClassProfile = 'normal' | 'suspicious' | 'tamper' | 'mixed'
+
+/** 文件名 + 时间盐：同图多次分析略有不同，不同图差异明显 */
+function hashString(s: string): number {
+  let h = 2166136261
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return h >>> 0
+}
+
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a |= 0
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t ^= t + Math.imul(t ^ (t >>> 7), 61 | t)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function pickFrom<T>(rng: () => number, arr: readonly T[]): T {
+  return arr[Math.min(arr.length - 1, Math.floor(rng() * arr.length))]
+}
+
+/**
+ * 将检测范围划分为互不重叠的网格单元，每块 ROI 严格落在各自单元内，避免框线叠压。
+ */
+function allocateNonOverlappingRegionBoxes(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  count: number,
+  rng: () => number,
+): BboxXYWH[] {
+  const cols = Math.ceil(Math.sqrt(count))
+  const rows = Math.ceil(count / cols)
+  const cellW = w / cols
+  const cellH = h / rows
+  const boxes: BboxXYWH[] = []
+  let idx = 0
+  for (let r = 0; r < rows && idx < count; r++) {
+    for (let c = 0; c < cols && idx < count; c++, idx++) {
+      const cx = x + c * cellW
+      const cy = y + r * cellH
+      const fracLo = 0.05 + rng() * 0.04
+      const fracHi = 0.1 + rng() * 0.06
+      let mx = cellW * rndRange(rng, fracLo, fracHi)
+      let my = cellH * rndRange(rng, fracLo, fracHi)
+      const maxMx = Math.max(2, (cellW - 32) / 2 - 0.5)
+      const maxMy = Math.max(2, (cellH - 32) / 2 - 0.5)
+      mx = Math.min(mx, maxMx)
+      my = Math.min(my, maxMy)
+      if (cellW - 2 * mx < 32) mx = Math.max(0, (cellW - 32) / 2)
+      if (cellH - 2 * my < 32) my = Math.max(0, (cellH - 32) / 2)
+      const rx = Math.round(cx + mx)
+      const ry = Math.round(cy + my)
+      const rw = Math.max(32, Math.round(cellW - 2 * mx))
+      const rh = Math.max(32, Math.round(cellH - 2 * my))
+      boxes.push([rx, ry, rw, rh])
+    }
+  }
+  return boxes
+}
+
+/**
+ * 优先覆盖「数字」：顶部大号 ¥ 金额（居中宽框）、清单里账号/时间（贴右缘窄条），
+ * 避免落在标签与正文之间的空白带。
+ */
+function allocateAmountFocusRegionBoxes(
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  count: number,
+  rng: () => number,
+): BboxXYWH[] {
+  const boxes: BboxXYWH[] = []
+
+  const clampX = (rx: number, rw: number) =>
+    Math.max(x + 2, Math.min(x + w - rw - 2, Math.round(rx)))
+  const clampY = (ry: number, rh: number) =>
+    Math.max(y + 2, Math.min(y + h - rh - 2, Math.round(ry)))
+
+  /** 银行/App 详情页顶部「¥ 31,000.00」一类大金额 */
+  function pushHeroCenterAmount() {
+    const rw = Math.max(
+      88,
+      Math.min(w - 8, Math.round(w * rndRange(rng, 0.54, 0.8))),
+    )
+    const rh = Math.max(26, Math.round(h * rndRange(rng, 0.065, 0.115)))
+    const cx = x + w / 2 + w * rndRange(rng, -0.05, 0.05)
+    const rx = clampX(cx - rw / 2, rw)
+    const ry = clampY(y + h * rndRange(rng, 0.045, 0.2), rh)
+    boxes.push([rx, ry, rw, rh])
+  }
+
+  /**
+   * 清单行右侧数值列（账号、时间戳等），框偏窄并靠右，减少盖住中间留白。
+   * topRel/botRel：在图高中的纵向采样区间（0～1）
+   */
+  function pushRightDigitStrip(topRel: number, botRel: number) {
+    const lo = Math.min(topRel, botRel)
+    const hi = Math.max(topRel, botRel)
+    const rw = Math.max(
+      46,
+      Math.min(w - 8, Math.round(w * rndRange(rng, 0.28, 0.44))),
+    )
+    const rh = Math.max(20, Math.round(h * rndRange(rng, 0.038, 0.072)))
+    const marginR = w * rndRange(rng, 0.008, 0.038)
+    const rx = clampX(x + w - rw - marginR, rw)
+    const ry = clampY(y + h * (lo + (hi - lo) * rndRange(rng, 0.15, 0.9)), rh)
+    boxes.push([rx, ry, rw, rh])
+  }
+
+  if (count <= 1) {
+    const u = rng()
+    if (u < 0.55) {
+      pushHeroCenterAmount()
+    } else if (u < 0.55 + 0.3) {
+      pushRightDigitStrip(0.03, 0.22)
+    } else {
+      pushRightDigitStrip(0.2, 0.62)
+    }
+    return boxes
+  }
+
+  if (rng() < 0.78) {
+    pushHeroCenterAmount()
+    pushRightDigitStrip(0.22, 0.68)
+    return boxes
+  }
+
+  pushRightDigitStrip(0.04, 0.2)
+  pushRightDigitStrip(0.22, 0.58)
+  return boxes
+}
+
+function rndInt(rng: () => number, min: number, max: number): number {
+  return min + Math.floor(rng() * (max - min + 1))
+}
+
+function rndRange(rng: () => number, min: number, max: number): number {
+  return min + rng() * (max - min)
+}
+
+function confidenceByLabelRng(label: string, rng: () => number): number {
+  if (label === '正常') return rndRange(rng, 0.855, 0.972)
+  if (label === '可疑') return rndRange(rng, 0.598, 0.852)
+  return rndRange(rng, 0.705, 0.938)
+}
+
+function weightedPickRng<T>(
+  rng: () => number,
+  items: readonly T[],
+  weights: readonly number[],
+): T {
+  const sum = weights.reduce((a, b) => a + b, 0)
+  if (sum <= 0) return items[0]
+  let r = rng() * sum
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i]
+    if (r <= 0) return items[i]
+  }
+  return items[items.length - 1]
+}
+
+/** 子区域说明：短句、口语化，避免术语堆砌 */
+const MOCK_REASON_NORMAL = [
+  '和周围衔接自然，看不出裁剪、拼接的痕迹。',
+  '明暗、颜色过渡正常，更像一次性拍出来或正常保存的图。',
+  '没有明显「一块贴上去」或重复图案的感觉。',
+] as const
+
+const MOCK_REASON_SUSPICIOUS = [
+  '这一块和周围亮度、颜色差得有点明显，不排除改过或补过。',
+  '边缘有点「接不上」，建议您对照手机里的原图或系统记录再看一下。',
+  '截图类图片有时会误判，请结合真实交易界面或官方凭证核实。',
+] as const
+
+const MOCK_REASON_TAMPER = [
+  '能看出局部被涂改或替换过，边界比较生硬。',
+  '有「复制粘贴」那种重复纹理，和常见造假手法接近。',
+  '这一块颜色和周围不搭，像后来叠上去的内容。',
+  '扣减金额数字一带和周围衔接不自然，常见于改数、改账。',
+] as const
+
+function regionReasonRng(
+  rng: () => number,
+  label: string,
+  regionNo: number,
+): string {
+  const n = regionNo
+  if (label === '正常') {
+    return `关注区域${n}：${pickFrom(rng, MOCK_REASON_NORMAL)}`
+  }
+  if (label === '篡改') {
+    return `关注区域${n}：${pickFrom(rng, MOCK_REASON_TAMPER)}`
+  }
+  return `关注区域${n}：${pickFrom(rng, MOCK_REASON_SUSPICIOUS)}`
+}
+
+const MOCK_SUMMARY_NORMAL = [
+  '整体来看，没有发现明显的修图或拼接痕迹。',
+  '没有发现需要特别留意的局部问题。',
+] as const
+
+const MOCK_SUMMARY_SUSPICIOUS = [
+  '有少数地方看起来不太自然，建议您再结合原始凭证或源文件核对。',
+  '系统标出了可疑位置，但还不能当作最终结论，最好人工再看一眼。',
+] as const
+
+const MOCK_SUMMARY_TAMPER = [
+  '多处特征显示这张图可能经过比较明显的后期编辑，重要用途请务必人工确认。',
+  '篡改痕迹相对明显，本结果仅供辅助参考，不能单独作为法律依据。',
+] as const
+
+function summaryReasonRng(rng: () => number, label: string): string {
+  const pool =
+    label === '正常'
+      ? MOCK_SUMMARY_NORMAL
+      : label === '篡改'
+        ? MOCK_SUMMARY_TAMPER
+        : MOCK_SUMMARY_SUSPICIOUS
+  const main = pickFrom(rng, pool)
+  if (label === '正常') {
+    return `${main}若仍有疑问，可换一张更清晰的原图再检测一次。`
+  }
+  return `${main}图上的编号与框一一对应，请从下栏说明里按序号查看。`
+}
+
+/** 全图「正常」且无异常子区（不出现「预览/定位框」类技术说明） */
+function summaryReasonStrictNormalRng(rng: () => number): string {
+  return pickFrom(rng, [
+    '本次检测未发现明显修图或拼接痕迹，图片整体表现正常。',
+    '整体看起来没有明显改动痕迹；若您不放心，可换更清晰的原图再检一次。',
+  ])
+}
+
+function summaryLabelByProfileRng(
+  rng: () => number,
+  profile: MockClassProfile,
+  multi: V3ResultItem[],
+): '正常' | '可疑' | '篡改' {
+  if (profile === 'normal') return rng() < 0.9 ? '正常' : '可疑'
+  if (profile === 'suspicious') return rng() < 0.72 ? '可疑' : '篡改'
+  if (profile === 'tamper') return rng() < 0.82 ? '篡改' : '可疑'
+  const hasTamper = multi.some((m) => m.result === '篡改')
+  const hasSuspicious = multi.some((m) => m.result === '可疑')
+  return hasTamper ? '篡改' : hasSuspicious ? '可疑' : '正常'
+}
+
+/** 按文件名（通常带分类目录名或关键字）识别演示类别 */
+function detectProfileFromFileName(name: string): MockClassProfile {
+  const n = name.toLowerCase()
+  const has = (arr: readonly string[]) => arr.some((k) => n.includes(k))
+  // 中文分类优先：避免 "没有p图" 被简单命中 "p图"
+  if (has(['没有p图', '未p图', '无p图', '未ps', 'no_ps', 'nop'])) return 'normal'
+  if (has(['p图', '有p图', 'ps图', 'ps_', '_ps', 'photoshop'])) return 'tamper'
+  if (has(['正常', 'normal', 'authentic', 'real', 'true'])) return 'normal'
+  if (has(['可疑', 'suspicious', 'suspect', '疑似'])) return 'suspicious'
+  if (has(['篡改', 'tamper', 'forg', 'fake', 'ps', '编辑'])) return 'tamper'
+  return 'mixed'
+}
+
+/** 演示素材：优先按文件名白名单；否则按文件名关键词 */
+function resolveMockProfile(fileName: string): MockClassProfile {
+  const demo = demoLabelForFileName(fileName)
+  if (demo === 'tamper') return 'tamper'
+  if (demo === 'normal') return 'normal'
+  if (demo === 'mixed') return 'mixed'
+  return detectProfileFromFileName(fileName)
+}
+
+/** 文件名含「没有p图」等（上传时无目录路径，靠文件名标识） */
+function filenameIndicatesNoEdit(name: string): boolean {
+  const n = (name || '').toLowerCase()
+  return ['没有p图', '未p图', '无p图', '未ps', 'no_ps', 'nop'].some((k) =>
+    n.includes(k),
+  )
+}
+
+/** 文件名含 p 图相关且不含「没有p图」 */
+function filenameIndicatesEdit(name: string): boolean {
+  const n = (name || '').toLowerCase()
+  if (filenameIndicatesNoEdit(name)) return false
+  return ['p图', '有p图', 'ps图', 'photoshop'].some((k) => n.includes(k))
+}
+
+/** 白名单 normal 或文件名标明未编辑 → 整图与各区域均不得出现可疑/篡改 */
+function isStrictNormalDemo(fileName: string): boolean {
+  const demo = demoLabelForFileName(fileName)
+  if (demo === 'tamper') return false
+  if (demo === 'normal') return true
+  return filenameIndicatesNoEdit(fileName)
+}
+
+/** 白名单 tamper 或文件名标明 p 过 → 不出现「全图正常」 */
+function isStrictTamperDemo(fileName: string): boolean {
+  const demo = demoLabelForFileName(fileName)
+  if (demo === 'normal') return false
+  if (demo === 'tamper') return true
+  return filenameIndicatesEdit(fileName)
+}
+
+function makeStrictNormalOutcome(
+  bbox: BboxXYXY,
+  rng: () => number,
+): { result: V3ResultItem; multi: V3ResultItem[] } {
+  const [x, y, w, h] = toXYWH(bbox)
+  /** 严格正常：不返回子区；摘要 bbox 置零以免绘制整图框 */
+  const summary: V3ResultItem = {
+    result: '正常',
+    confidence: Number(confidenceByLabelRng('正常', rng).toFixed(4)),
+    bbox: [0, 0, 0, 0],
+    reason: summaryReasonStrictNormalRng(rng),
+    original_bbox: [x, y, x + w, y + h],
+  }
+  return { result: summary, multi: [] }
+}
+
+function makeStrictTamperOutcome(
+  bbox: BboxXYXY,
+  rng: () => number,
+): { result: V3ResultItem; multi: V3ResultItem[] } {
+  const [x, y, w, h] = toXYWH(bbox)
+  /** 只标 1～2 处，避免满屏框线 */
+  const count = rndInt(rng, 1, 2)
+  const labels = ['正常', '可疑', '篡改'] as const
+  /** 极低正常，突出篡改/可疑 */
+  const weights = [0.04, 0.32, 0.64] as const
+  const cells = allocateAmountFocusRegionBoxes(x, y, w, h, count, rng)
+  const multi: V3ResultItem[] = []
+  for (let i = 0; i < count; i++) {
+    const [rx, ry, rw, rh] = cells[i]
+    const pick = weightedPickRng(rng, labels, weights)
+    multi.push({
+      result: pick,
+      confidence: Number(confidenceByLabelRng(pick, rng).toFixed(4)),
+      bbox: [rx, ry, rw, rh],
+      reason: regionReasonRng(rng, pick, i + 1),
+      original_bbox: [rx, ry, rx + rw, ry + rh],
+    })
+  }
+  const summaryLabel = weightedPickRng(
+    rng,
+    ['篡改', '可疑'] as const,
+    [0.88, 0.12],
+  )
+  const summary: V3ResultItem = {
+    result: summaryLabel,
+    confidence: Number(confidenceByLabelRng(summaryLabel, rng).toFixed(4)),
+    bbox: [x, y, w, h],
+    reason: summaryReasonRng(rng, summaryLabel),
+    original_bbox: [x, y, x + w, y + h],
+  }
+  return { result: summary, multi }
+}
+
+function newTaskId(): string {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `mock-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+}
+
+function makeMockOutcome(bbox: BboxXYXY, fileName: string): {
+  result: V3ResultItem
+  multi: V3ResultItem[]
+} {
+  const base = hashString((fileName || 'unnamed').toLowerCase())
+  const salt = (Date.now() ^ (performance.now() * 1e6)) >>> 0
+  const rng = mulberry32(base ^ salt)
+  if (isStrictNormalDemo(fileName)) {
+    return makeStrictNormalOutcome(bbox, rng)
+  }
+  if (isStrictTamperDemo(fileName)) {
+    return makeStrictTamperOutcome(bbox, rng)
+  }
+  const [x, y, w, h] = toXYWH(bbox)
+  const count = rndInt(rng, 1, 2)
+  const labels = ['正常', '可疑', '篡改'] as const
+  const profile = resolveMockProfile(fileName)
+  const classWeights: Record<MockClassProfile, readonly number[]> = {
+    normal: [0.82, 0.15, 0.03],
+    suspicious: [0.16, 0.66, 0.18],
+    tamper: [0.05, 0.28, 0.67],
+    mixed: [0.34, 0.38, 0.28],
+  }
+  const cells =
+    profile === 'normal'
+      ? allocateNonOverlappingRegionBoxes(x, y, w, h, count, rng)
+      : allocateAmountFocusRegionBoxes(x, y, w, h, count, rng)
+  const multi: V3ResultItem[] = []
+  for (let i = 0; i < count; i++) {
+    const [rx, ry, rw, rh] = cells[i]
+    const pick = weightedPickRng(rng, labels, classWeights[profile])
+    multi.push({
+      result: pick,
+      confidence: Number(confidenceByLabelRng(pick, rng).toFixed(4)),
+      bbox: [rx, ry, rw, rh],
+      reason: regionReasonRng(rng, pick, i + 1),
+      original_bbox: [rx, ry, rx + rw, ry + rh],
+    })
+  }
+  const summaryLabel = summaryLabelByProfileRng(rng, profile, multi)
+  const summary: V3ResultItem = {
+    result: summaryLabel,
+    confidence: Number(confidenceByLabelRng(summaryLabel, rng).toFixed(4)),
+    bbox: [x, y, w, h],
+    reason: summaryReasonRng(rng, summaryLabel),
+    original_bbox: [x, y, x + w, y + h],
+  }
+  return { result: summary, multi }
+}
+
+async function runMockDetect(file: File, bbox: BboxXYXY, signal?: AbortSignal): Promise<V1SyncDetectBody> {
+  await waitMs(randomInt(4700, 5600), signal)
+  const taskId = newTaskId()
+  const out = makeMockOutcome(bbox, file.name || '')
+  const rec: DetectionHistoryApiRecord = {
+    id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    created_at: nowIso(),
+    mode: 'v1-sync-mock',
+    task_id: taskId,
+    original_filename: file.name || '未命名图片',
+    bbox,
+    status: 'COMPLETED',
+    outcome: {
+      result: out.result,
+      multi_results: out.multi,
+      error_msg: null,
+    },
+  }
+  const list = readMockHistory()
+  writeMockHistory([rec, ...list].slice(0, 200))
+  return {
+    status: 'COMPLETED',
+    result: out.result,
+    multi: out.multi,
+    error_msg: null,
+    task_id: taskId,
+  }
+}
+
+export interface V3SubmitBody {
+  status: string
+  task_id: string
+}
+
+function normalizeV3SubmitJson(json: unknown): V3SubmitBody {
+  const o = outcomeLayer(json)
+  const taskId =
+    typeof o.task_id === 'string'
+      ? o.task_id.trim()
+      : typeof o.taskId === 'string'
+        ? o.taskId.trim()
+        : ''
+  const status =
+    typeof o.status === 'string' && o.status.trim()
+      ? o.status.trim()
+      : typeof o.message === 'string' && taskId
+        ? 'pending'
+        : ''
+
+  if (!taskId) {
+    throw new Error('服务端未返回任务 ID')
+  }
+
+  return {
+    status: status || 'pending',
+    task_id: taskId,
+  }
+}
+
+export async function submitV3Detect(
+  file: File,
+  bbox?: BboxXYXY | null,
+  opts?: { signal?: AbortSignal },
+): Promise<V3SubmitBody> {
+  const fd = new FormData()
+  fd.append('file', file)
+  if (bbox != null) fd.append('bbox', JSON.stringify(bbox))
+  const res = await fetch(aiDetectionUrl('/api/v3/detect'), {
+    method: 'POST',
+    body: fd,
+    signal: opts?.signal,
+  })
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(httpFailMessage(res.status, t))
+  }
+  const json: unknown = await res.json()
+  return normalizeV3SubmitJson(json)
+}
+
+/** POST /ai-detection/api/v1/image-detection/detect — 单图鉴伪（同步，一次请求返回结果） */
+export interface V1SyncDetectBody {
+  status?: string
+  result?: V3ResultItem | null
+  multi?: V3ResultItem[]
+  error_msg?: string | null
+  task_id?: string | null
+}
+
+function outcomeLayer(json: unknown): Record<string, unknown> {
+  if (!isRecord(json)) return {}
+  const data = json.data
+  if (isRecord(data)) {
+    return { ...json, ...data }
+  }
+  return json
+}
+
+function normalizeV1SyncJson(json: unknown): V1SyncDetectBody {
+  const o = outcomeLayer(json)
+  const multi =
+    (Array.isArray(o.multi_results) ? o.multi_results : null) ??
+    (Array.isArray(o.multiResults) ? o.multiResults : null) ??
+    (Array.isArray(o.multi) ? o.multi : undefined)
+  const result = (o.result as V3ResultItem | null | undefined) ?? null
+  const err =
+    typeof o.error_msg === 'string'
+      ? o.error_msg
+      : typeof o.errorMsg === 'string'
+        ? o.errorMsg
+        : typeof o.detail === 'string'
+          ? o.detail
+          : null
+  const taskId =
+    typeof o.task_id === 'string'
+      ? o.task_id
+      : typeof o.taskId === 'string'
+        ? o.taskId
+        : null
+  const status = typeof o.status === 'string' ? o.status : undefined
+  if (o.success === false || o.ok === false) {
+    return {
+      status: 'FAILED',
+      result: null,
+      multi: undefined,
+      error_msg:
+        err ||
+        (typeof o.message === 'string' ? o.message : null) ||
+        '检测失败',
+      task_id: taskId,
+    }
+  }
+  return {
+    status,
+    result,
+    multi: multi as V3ResultItem[] | undefined,
+    error_msg: err,
+    task_id: taskId,
+  }
+}
+
+/** bbox 为必填表单字段（全图可传 [0,0,naturalWidth,naturalHeight]） */
+export async function submitV1ImageDetectSync(
+  file: File,
+  bbox: BboxXYXY,
+  opts?: { signal?: AbortSignal },
+): Promise<V1SyncDetectBody> {
+  if (useMockOnly()) {
+    return runMockDetect(file, bbox, opts?.signal)
+  }
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('bbox', JSON.stringify(bbox))
+  const res = await fetch(aiDetectionUrl('/api/v1/image-detection/detect'), {
+    method: 'POST',
+    body: fd,
+    signal: opts?.signal,
+  })
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(httpFailMessage(res.status, t))
+  }
+  const json: unknown = await res.json()
+  return normalizeV1SyncJson(json)
+}
+
+export interface V3ResultItem {
+  result: string
+  confidence: number
+  bbox: BboxXYWH
+  reason: string
+  original_bbox?: BboxXYXY
+  source?: string | null
+  text?: string | null
+  flags?: string | null
+  ocr_confidence?: number | null
+  amount_score?: number | null
+}
+
+export interface V3PollBody {
+  task_id: string
+  status: string
+  created_at?: string
+  result?: V3ResultItem | null
+  multi_results?: V3ResultItem[]
+  error_msg?: string | null
+}
+
+function resultSeverity(label: unknown): number {
+  const text = typeof label === 'string' ? label.trim() : ''
+  if (text === '篡改') return 3
+  if (text === '可疑') return 2
+  if (text === '正常') return 1
+  if (text === '错误') return 0
+  return -1
+}
+
+function sortV3ResultItems(items?: V3ResultItem[]): V3ResultItem[] | undefined {
+  if (!items?.length) return items
+  return [...items].sort((a, b) => {
+    const rankGap = resultSeverity(b?.result) - resultSeverity(a?.result)
+    if (rankGap !== 0) return rankGap
+    return Number(b?.confidence ?? 0) - Number(a?.confidence ?? 0)
+  })
+}
+
+function topV3ResultItem(
+  result: V3ResultItem | null | undefined,
+  multi?: V3ResultItem[],
+): V3ResultItem | null {
+  if (result) return result
+  return multi?.[0] ?? null
+}
+
+function normalizeV3PollJson(json: unknown): V3PollBody {
+  const o = outcomeLayer(json)
+  const rawMulti =
+    (Array.isArray(o.multi_results) ? o.multi_results : null) ??
+    (Array.isArray(o.multiResults) ? o.multiResults : null) ??
+    undefined
+  const multi = sortV3ResultItems(rawMulti as V3ResultItem[] | undefined)
+  const result = topV3ResultItem(
+    (o.result as V3ResultItem | null | undefined) ?? null,
+    multi,
+  )
+  const taskId =
+    typeof o.task_id === 'string'
+      ? o.task_id
+      : typeof o.taskId === 'string'
+        ? o.taskId
+        : ''
+  const createdAt =
+    typeof o.created_at === 'string'
+      ? o.created_at
+      : typeof o.createdAt === 'string'
+        ? o.createdAt
+        : undefined
+  const errorMsg =
+    typeof o.error_msg === 'string'
+      ? o.error_msg
+      : typeof o.errorMsg === 'string'
+        ? o.errorMsg
+        : typeof o.detail === 'string'
+          ? o.detail
+          : null
+
+  return {
+    task_id: taskId,
+    status: typeof o.status === 'string' ? o.status : '',
+    created_at: createdAt,
+    result,
+    multi_results: multi,
+    error_msg: errorMsg,
+  }
+}
+
+export async function getV3Result(
+  taskId: string,
+  opts?: { signal?: AbortSignal },
+): Promise<V3PollBody> {
+  const res = await fetch(aiDetectionUrl(`/api/v3/result/${encodeURIComponent(taskId)}`), {
+    signal: opts?.signal,
+  })
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(httpFailMessage(res.status, t))
+  }
+  const json: unknown = await res.json()
+  return normalizeV3PollJson(json)
+}
+
+export async function getVisualizationBlob(taskId: string): Promise<Blob> {
+  const res = await fetch(aiDetectionUrl(`/api/v3/result/${encodeURIComponent(taskId)}/visualization`))
+  if (!res.ok) {
+    const t = await res.text()
+    try {
+      const j = JSON.parse(t) as { detail?: string }
+      if (typeof j.detail === 'string' && j.detail.trim()) {
+        throw new Error(j.detail)
+      }
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        /* 非 JSON，走下方网关说明 */
+      } else {
+        throw e
+      }
+    }
+    throw new Error(httpFailMessage(res.status, t))
+  }
+  return res.blob()
+}
+
+export async function deleteV3Task(taskId: string): Promise<void> {
+  const res = await fetch(aiDetectionUrl(`/api/v3/task/${encodeURIComponent(taskId)}`), {
+    method: 'DELETE',
+  })
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(httpFailMessage(res.status, t))
+  }
+}
+
+/** GET /ai-detection/api/v1/history 单条结构（与 OpenAPI 一致，字段略宽松） */
+export interface DetectionHistoryOutcome {
+  result?: V3ResultItem | null
+  multi_results?: V3ResultItem[]
+  error_msg?: string | null
+}
+
+export interface DetectionHistoryApiRecord {
+  id: string | number
+  created_at: string
+  mode: string
+  task_id?: string | null
+  original_filename?: string | null
+  image_url?: string | null
+  bbox?: unknown
+  status: string
+  outcome?: DetectionHistoryOutcome | null
+}
+
+export interface DetectionHistoryListResult {
+  items: DetectionHistoryApiRecord[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+function numOr(v: unknown, d: number): number {
+  const n = Number(v)
+  return Number.isFinite(n) ? n : d
+}
+
+/** 后端可能给 null、时间戳数字或空格字符串，不能再因缺时间整行丢弃（否则 total 有值、列表为空） */
+function coerceHistoryCreatedAt(raw: Record<string, unknown>): string {
+  const v = raw.created_at ?? raw.createdAt
+  if (v == null) return ''
+  if (typeof v === 'string') return v.trim()
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    const ms = v > 1e12 ? v : v * 1000
+    try {
+      return new Date(ms).toISOString()
+    } catch {
+      return ''
+    }
+  }
+  return String(v).trim()
+}
+
+function coerceApiRecord(raw: Record<string, unknown>): DetectionHistoryApiRecord | null {
+  const rawId = raw.id
+  if (rawId === undefined || rawId === null) return null
+  const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : String(rawId)
+  const created = coerceHistoryCreatedAt(raw) || '—'
+  const st = typeof raw.status === 'string' ? raw.status : 'COMPLETED'
+  const mode = typeof raw.mode === 'string' ? raw.mode : 'unknown'
+  const taskId =
+    typeof raw.task_id === 'string'
+      ? raw.task_id
+      : typeof raw.taskId === 'string'
+        ? raw.taskId
+        : null
+  const name =
+    typeof raw.original_filename === 'string'
+      ? raw.original_filename
+      : typeof raw.originalFilename === 'string'
+        ? raw.originalFilename
+        : null
+  const imageUrl =
+    typeof raw.image_url === 'string'
+      ? raw.image_url
+      : typeof raw.imageUrl === 'string'
+        ? raw.imageUrl
+        : null
+  let outcome: DetectionHistoryOutcome | null = null
+  const oc = raw.outcome
+  if (isRecord(oc)) {
+    const multi = sortV3ResultItems(
+      Array.isArray(oc.multi_results)
+        ? (oc.multi_results as V3ResultItem[])
+        : Array.isArray(oc.multiResults)
+          ? (oc.multiResults as V3ResultItem[])
+          : undefined,
+    )
+    const result = topV3ResultItem(
+      (oc.result as V3ResultItem | null | undefined) ?? null,
+      multi,
+    )
+    outcome = {
+      result,
+      multi_results: multi,
+      error_msg:
+        typeof oc.error_msg === 'string'
+          ? oc.error_msg
+          : typeof oc.errorMsg === 'string'
+            ? oc.errorMsg
+            : null,
+    }
+  }
+  return {
+    id,
+    created_at: created,
+    mode,
+    task_id: taskId,
+    original_filename: name,
+    image_url: imageUrl,
+    bbox: raw.bbox,
+    status: st,
+    outcome,
+  }
+}
+
+function extractItemsAndTotal(json: unknown): {
+  items: DetectionHistoryApiRecord[]
+  total: number
+} {
+  let rawList: unknown[] = []
+  let total = 0
+
+  if (Array.isArray(json)) {
+    rawList = json
+    total = json.length
+  } else if (isRecord(json)) {
+    if (Array.isArray(json.list)) rawList = json.list
+    else if (Array.isArray(json.items)) rawList = json.items
+    else if (Array.isArray(json.records)) rawList = json.records
+    else if (Array.isArray(json.results)) rawList = json.results
+    else if (Array.isArray(json.data)) {
+      rawList = json.data
+      total = numOr(json.total, rawList.length)
+    } else if (isRecord(json.data)) {
+      const d = json.data
+      if (Array.isArray(d.list)) rawList = d.list
+      else if (Array.isArray(d.items)) rawList = d.items
+      else if (Array.isArray(d.records)) rawList = d.records
+      else if (Array.isArray(d.results)) rawList = d.results
+      total = numOr(d.total, 0)
+    }
+    if (!total) total = numOr(json.total, rawList.length)
+  }
+
+  const items: DetectionHistoryApiRecord[] = []
+  for (const row of rawList) {
+    if (!isRecord(row)) continue
+    const rec = coerceApiRecord(row)
+    if (rec) items.push(rec)
+  }
+  if (!total) total = items.length
+  return { items, total }
+}
+
+/** 分页查询服务端检测历史（近 N 天，由后端配置） */
+export async function fetchDetectionHistory(
+  page = 1,
+  pageSize = 20,
+): Promise<DetectionHistoryListResult> {
+  const p = Math.max(1, page)
+  const ps = Math.min(200, Math.max(1, pageSize))
+  const fromMock = (): DetectionHistoryListResult => {
+    const all = readMockHistory()
+    const start = (p - 1) * ps
+    const items = all.slice(start, start + ps)
+    return { items, total: all.length, page: p, pageSize: ps }
+  }
+  if (useMockOnly()) {
+    return fromMock()
+  }
+  const q = new URLSearchParams({
+    page: String(p),
+    page_size: String(ps),
+  })
+  const res = await fetch(`${aiDetectionUrl('/api/v1/history')}?${q}`)
+  if (!res.ok) {
+    const t = await res.text()
+    throw new Error(httpFailMessage(res.status, t))
+  }
+  const json: unknown = await res.json()
+  const { items, total } = extractItemsAndTotal(json)
+  return { items, total, page: p, pageSize: ps }
+}

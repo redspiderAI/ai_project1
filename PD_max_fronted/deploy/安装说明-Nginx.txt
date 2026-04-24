@@ -1,0 +1,63 @@
+一键
+  npm run deploy:all
+
+默认行为（你当前服务器）
+  pd.conf 里已经有 server_name 含 111.229.25.160，不能再建第二个同名 server，否则会 conflicting server name。
+  脚本会：
+    1) 把 deploy/nginx-snippet-project3.conf 装到 /etc/nginx/snippets/
+    2) 用 deploy/patch_pd_nginx.py 在 pd.conf 里对应 server_name 行下面插入一行 include
+    3) 删掉 00-ai-frontend-project3 独立站点（避免冲突）
+    4) nginx -t && reload
+
+若 patch 失败（pd.conf 里没有这串 IP）
+  手工在正确 server { } 里加一行：
+    include /etc/nginx/snippets/ai-frontend-project3.conf;
+  或指定别的配置文件：
+    .\deploy.ps1 -NginxOnly -NginxPdConf /etc/nginx/sites-available/你的.conf
+
+没有 pd、要用独立站点时
+  .\deploy.ps1 -NginxOnly -NginxStandaloneSite
+
+================================================================================
+域名 redspiderbc.cn（替代浏览器里用 IP 访问 /project1 /project2 /project3）
+================================================================================
+
+1) DNS（在域名服务商控制台）
+   - 类型 A，主机记录 @  -> 指向服务器公网 IP（例如 111.229.25.160）
+   - 可选：主机记录 www -> 同上 IP（或 CNAME 到 redspiderbc.cn）
+
+2) 改 Nginx 里「对外站点」的 server_name（编辑服务器上的 pd.conf 或实际站点文件）
+   在 listen 80（及若有 listen 443）对应的 server { } 里，把原来的
+     server_name 111.229.25.160;
+   改成同时支持域名（可与 IP 并存，避免 DNS 未生效时旧链接仍可用）：
+     server_name redspiderbc.cn www.redspiderbc.cn 111.229.25.160;
+
+3) patch 脚本要匹配 server_name 里出现的「关键字」
+   合并 snippet 时，让 patch 找到包含域名的那一行，例如：
+     .\deploy.ps1 -NginxOnly -NginxServerName redspiderbc.cn
+   若 pd.conf 里仍只有 IP、尚未加域名，可继续用：
+     .\deploy.ps1 -NginxOnly -NginxServerName 111.229.25.160
+   也可一次写多个（英文逗号分隔，按顺序尝试；域名未写入时仍能靠 IP 匹配成功）：
+     .\deploy.ps1 -NginxOnly -NginxSnippet all123 -NginxServerName "redspiderbc.cn,111.229.25.160"
+
+4) 一次部署 /project1、/project2、/project3 三个路径的 location（服务器上需已有三套静态目录）
+     .\deploy.ps1 -NginxOnly -NginxSnippet all123 -NginxServerName redspiderbc.cn
+   仍只发布本仓库前端到 /project3 时，保持默认：
+     .\deploy.ps1 -NginxOnly -NginxServerName redspiderbc.cn
+
+   【all123 与 pd.conf 冲突】若 pd.conf 里已经写了 location /project1/ 或 include ai-frontend-project2.conf，
+   不要用 all123（会 duplicate location）。请：
+     .\deploy.ps1 -NginxOnly -NginxSnippet project3 -NginxServerName "111.229.25.160"
+   或先手工删掉 pd.conf 里重复的 project1/project2 段，再装 all123。
+
+5) SSH / scp 仍可用 IP（不必改 ServerHost），例如：
+     .\deploy.ps1 -ServerHost 111.229.25.160 -WithNginx -NginxServerName redspiderbc.cn
+
+6) HTTPS（可选）
+   域名解析生效后：sudo apt install certbot python3-certbot-nginx
+   sudo certbot --nginx -d redspiderbc.cn -d www.redspiderbc.cn
+
+访问示例（DNS 生效后）
+  http://redspiderbc.cn/project1/
+  http://redspiderbc.cn/project2/
+  http://redspiderbc.cn/project3/

@@ -1,0 +1,37 @@
+# Standalone site only (-NginxStandaloneSite). Default deploy merges nginx-snippet-project3.conf into pd.conf.
+server {
+    listen 80;
+    listen [::]:80;
+    server_name __SERVER_NAME__;
+
+    client_max_body_size 50m;
+
+    location ^~ /project3/assets/ {
+        alias /var/www/html/project3/assets/;
+        access_log off;
+        expires 7d;
+    }
+
+    location ^~ /project3/ {
+        root /var/www/html;
+        index index.html;
+        try_files $uri $uri/ /project3/index.html;
+    }
+
+    location = /project3 {
+        return 301 /project3/;
+    }
+
+    set $backend "http://127.0.0.1:__API_PORT__";
+
+    location / {
+        proxy_pass $backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_connect_timeout 75s;
+    }
+}

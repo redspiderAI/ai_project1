@@ -65,6 +65,9 @@
       <section v-else-if="activeSection === 'map'" class="panel emap-panel">
         <ElectronicMap />
       </section>
+      <section v-else-if="activeSection === 'detect'" class="panel detect-panel">
+        <DetectApp />
+      </section>
       <section v-else-if="activeSection === 'users'" class="panel inner-page">
         <UserManage />
       </section>
@@ -120,6 +123,7 @@ import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
 import ElectronicMap from './pages/ElectronicMap.vue'
 import UserManage from './pages/UserManage.vue'
+import DetectApp from '../PD_max_fronted/src/App.vue'
 import { clearToken, getToken, login } from './api/authApi'
 
 type SectionKey = 'prediction' | 'map' | 'detect' | 'price' | 'users'
@@ -444,6 +448,11 @@ body {
   flex-direction: column;
   overflow: hidden;
   background: #f3f4f6;
+}
+
+.detect-panel {
+  flex: 1;
+  min-height: 0;
 }
 
 .page-main.has-sub-nav .iframe-panel {

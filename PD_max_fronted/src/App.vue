@@ -1,0 +1,2218 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, toRaw } from 'vue'
+import {
+  deleteV3Task,
+  fetchDetectionHistory,
+  getV3Result,
+  getVisualizationBlob,
+  resolveApiUrl,
+  submitV3Detect,
+  type BboxXYXY,
+  type V3ResultItem,
+} from './api/detect'
+import {
+  mapApiRecordToEntry,
+  type DetectionHistoryEntry,
+} from './detectionHistory'
+const file = ref<File | null>(null)
+const previewUrl = ref<string | null>(null)
+const historyPreviewUrl = ref<string | null>(null)
+const imgRef = ref<HTMLImageElement | null>(null)
+const imageNatural = ref({ w: 0, h: 0 })
+
+const v3SpecifyBbox = ref(false)
+const drawing = ref(false)
+const drawStart = ref<{ x: number; y: number } | null>(null)
+const drawCurrent = ref<{ x: number; y: number } | null>(null)
+const userBbox = ref<BboxXYXY | null>(null)
+
+const busy = ref(false)
+const pollStatus = ref('')
+const errorMsg = ref<string | null>(null)
+const dragOver = ref(false)
+
+const v3TaskId = ref<string | null>(null)
+const v3Payload = ref<{
+  result?: V3ResultItem | null
+  multi?: V3ResultItem[]
+  error_msg?: string | null
+} | null>(null)
+
+const vizObjectUrl = ref<string | null>(null)
+const vizLoading = ref(false)
+const historyEntries = ref<DetectionHistoryEntry[]>([])
+const historyLoading = ref(false)
+const historyError = ref<string | null>(null)
+const historyTotal = ref(0)
+/** 当前列表页码（从 1 起，每页仅展示本页 9 条） */
+const historyPage = ref(1)
+const HISTORY_PAGE_SIZE = 9
+
+const historyTotalPages = computed(() =>
+  historyTotal.value <= 0 ? 0 : Math.ceil(historyTotal.value / HISTORY_PAGE_SIZE),
+)
+
+const historyCanPrev = computed(() => historyPage.value > 1)
+
+const historyCanNext = computed(
+  () =>
+    historyTotalPages.value > 0 && historyPage.value < historyTotalPages.value,
+)
+
+const viewingHistoryId = ref<string | null>(null)
+/** 同步检测进行中时用于取消 fetch */
+const detectAbort = ref<AbortController | null>(null)
+
+const serviceDisplay = computed(() => {
+  const apiBase = String(import.meta.env.VITE_API_BASE ?? '').trim()
+  if (apiBase) return apiBase.replace(/\/$/, '')
+  const proxyTarget = String(import.meta.env.VITE_PROXY_TARGET ?? '').trim()
+  if (proxyTarget) return `vite-proxy -> ${proxyTarget.replace(/\/$/, '')}`
+  return 'http://111.229.25.160:8002'
+})
+
+const activePreviewUrl = computed(() =>
+  viewingHistoryId.value ? historyPreviewUrl.value : previewUrl.value,
+)
+
+function assignFile(f: File | null) {
+  resetResults()
+  if (previewUrl.value) {
+    URL.revokeObjectURL(previewUrl.value)
+    previewUrl.value = null
+  }
+  userBbox.value = null
+  file.value = f
+  imageNatural.value = { w: 0, h: 0 }
+  if (f) previewUrl.value = URL.createObjectURL(f)
+}
+
+function onFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  assignFile(input.files?.[0] ?? null)
+}
+
+function onDragOver(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = true
+}
+
+function onDragLeave() {
+  dragOver.value = false
+}
+
+function onDrop(e: DragEvent) {
+  e.preventDefault()
+  dragOver.value = false
+  const f = e.dataTransfer?.files?.[0]
+  if (f && /^image\//.test(f.type)) assignFile(f)
+}
+
+function resetResults() {
+  errorMsg.value = null
+  viewingHistoryId.value = null
+  historyPreviewUrl.value = null
+  v3Payload.value = null
+  detectAbort.value?.abort()
+  detectAbort.value = null
+  vizLoading.value = false
+  if (vizObjectUrl.value) {
+    URL.revokeObjectURL(vizObjectUrl.value)
+    vizObjectUrl.value = null
+  }
+  v3TaskId.value = null
+}
+
+function onImgLoad() {
+  const el = imgRef.value
+  imageNatural.value = el
+    ? { w: el.naturalWidth, h: el.naturalHeight }
+    : { w: 0, h: 0 }
+}
+
+function onImgError() {
+  imageNatural.value = { w: 0, h: 0 }
+  if (viewingHistoryId.value) {
+    historyPreviewUrl.value = null
+  }
+}
+
+const overlayStroke = computed(() =>
+  Math.max(2, (imageNatural.value.w || 0) * 0.003),
+)
+
+function naturalBboxFromDraw(): BboxXYXY | null {
+  const img = imgRef.value
+  if (!img?.naturalWidth || !drawStart.value || !drawCurrent.value) return null
+  const s = drawStart.value
+  const c = drawCurrent.value
+  const x1 = Math.max(0, Math.min(s.x, c.x))
+  const y1 = Math.max(0, Math.min(s.y, c.y))
+  const x2 = Math.min(img.naturalWidth, Math.max(s.x, c.x))
+  const y2 = Math.min(img.naturalHeight, Math.max(s.y, c.y))
+  if (x2 - x1 < 2 || y2 - y1 < 2) return null
+  return [Math.round(x1), Math.round(y1), Math.round(x2), Math.round(y2)]
+}
+
+function eventToNatural(e: MouseEvent, img: HTMLImageElement) {
+  const r = img.getBoundingClientRect()
+  const x = ((e.clientX - r.left) / r.width) * img.naturalWidth
+  const y = ((e.clientY - r.top) / r.height) * img.naturalHeight
+  return {
+    x: Math.max(0, Math.min(img.naturalWidth, x)),
+    y: Math.max(0, Math.min(img.naturalHeight, y)),
+  }
+}
+
+function onDrawDown(e: MouseEvent) {
+  const img = imgRef.value
+  if (!img?.naturalWidth || busy.value) return
+  drawing.value = true
+  drawStart.value = eventToNatural(e, img)
+  drawCurrent.value = { ...drawStart.value }
+}
+
+function onDrawMove(e: MouseEvent) {
+  const img = imgRef.value
+  if (!drawing.value || !img?.naturalWidth) return
+  drawCurrent.value = eventToNatural(e, img)
+}
+
+function onDrawUp() {
+  if (!drawing.value) return
+  drawing.value = false
+  const b = naturalBboxFromDraw()
+  drawStart.value = null
+  drawCurrent.value = null
+  if (b) userBbox.value = b
+}
+
+function fullImageBbox(): BboxXYXY | null {
+  const img = imgRef.value
+  if (!img?.naturalWidth) return null
+  return [0, 0, img.naturalWidth, img.naturalHeight]
+}
+
+const drawPreviewBbox = computed(() => {
+  const img = imgRef.value
+  if (!img?.naturalWidth || !drawStart.value || !drawCurrent.value) return null
+  const s = drawStart.value
+  const c = drawCurrent.value
+  return {
+    x1: Math.min(s.x, c.x),
+    y1: Math.min(s.y, c.y),
+    x2: Math.max(s.x, c.x),
+    y2: Math.max(s.y, c.y),
+  }
+})
+
+type NumberedBbox = {
+  n: number
+  bbox: readonly [number, number, number, number]
+}
+
+function bboxAreaWh(b: readonly [number, number, number, number]) {
+  return Math.max(0, b[2]) * Math.max(0, b[3])
+}
+
+/** 接口偶发缺 bbox 或非数组，直接解构会在 computed 里抛错导致整页白屏 */
+function readBboxWh(b: unknown): readonly [number, number, number, number] | null {
+  if (!Array.isArray(b) || b.length < 4) return null
+  const nums = b.slice(0, 4).map((v) => Number(v))
+  if (!nums.every((n) => Number.isFinite(n))) return null
+  const [x, y, w, h] = nums
+  if (w <= 0 || h <= 0) return null
+  return [x, y, w, h] as const
+}
+
+/** 与右侧列表序号一致；预览与历史坐标示意共用 */
+function collectNumberedBoxesFromPayload(
+  p: NonNullable<typeof v3Payload.value>,
+): NumberedBbox[] {
+  if (p.multi?.length) {
+    const raw: NumberedBbox[] = []
+    for (let i = 0; i < p.multi.length; i++) {
+      const m = p.multi[i]
+      if ((m.result || '').trim() === '正常') continue
+      const bb = readBboxWh(m?.bbox)
+      if (bb) raw.push({ n: i + 1, bbox: bb })
+    }
+    if (raw.length) {
+      return [...raw].sort((a, b) => bboxAreaWh(a.bbox) - bboxAreaWh(b.bbox))
+    }
+    return []
+  }
+  if (p.result) {
+    const top = (p.result.result || '').trim()
+    if (top === '正常') return []
+    const bb = readBboxWh(p.result.bbox)
+    if (bb) return [{ n: 1, bbox: bb }]
+  }
+  return []
+}
+
+/** 与右侧「各区域明细」序号一致；按面积从小到大排序绘制，小框后画在上层，减轻遮挡 */
+const previewNumberedRegions = computed((): NumberedBbox[] => {
+  if (!imageNatural.value.w) return []
+  const p = v3Payload.value
+  if (!p) return []
+  return collectNumberedBoxesFromPayload(p)
+})
+
+/** 看历史时无本机图、且服务器示意图未取回时，用坐标画一张「区域示意」避免只有文字 */
+const historySchematicSpec = computed(() => {
+  if (!viewingHistoryId.value || !v3Payload.value || activePreviewUrl.value) return null
+  if (vizObjectUrl.value || vizLoading.value) return null
+  const boxes = collectNumberedBoxesFromPayload(v3Payload.value)
+  if (!boxes.length) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const { bbox: b } of boxes) {
+    minX = Math.min(minX, b[0])
+    minY = Math.min(minY, b[1])
+    maxX = Math.max(maxX, b[0] + b[2])
+    maxY = Math.max(maxY, b[1] + b[3])
+  }
+  const w0 = maxX - minX
+  const h0 = maxY - minY
+  const pad = Math.max(16, Math.min(w0 || 1, h0 || 1) * 0.06)
+  const vx = minX - pad
+  const vy = minY - pad
+  const vw = w0 + 2 * pad
+  const vh = h0 + 2 * pad
+  if (!Number.isFinite(vw) || !Number.isFinite(vh) || vw <= 0 || vh <= 0) return null
+  const span = Math.max(vw, vh)
+  return { viewBox: `${vx} ${vy} ${vw} ${vh}`, span, boxes }
+})
+
+function schematicMarkerFromBbox(
+  bbox: readonly [number, number, number, number],
+  span: number,
+) {
+  const r = Math.max(8, Math.min(22, span * 0.022))
+  const x1 = bbox[0]
+  const y1 = bbox[1]
+  const bw = bbox[2]
+  const bh = bbox[3]
+  let cx = x1 + r + 3
+  let cy = y1 + r + 3
+  const minX = x1 + r + 1
+  const maxX = x1 + bw - r - 1
+  const minY = y1 + r + 1
+  const maxY = y1 + bh - r - 1
+  if (maxX >= minX) cx = Math.min(maxX, Math.max(minX, cx))
+  else cx = x1 + bw / 2
+  if (maxY >= minY) cy = Math.min(maxY, Math.max(minY, cy))
+  else cy = y1 + bh / 2
+  const fs = Math.max(12, Math.min(22, span * 0.028))
+  return { cx, cy, r, fs }
+}
+
+const historySchematicRenderList = computed(() => {
+  const s = historySchematicSpec.value
+  if (!s) return []
+  return s.boxes.map((it) => ({
+    ...it,
+    ...schematicMarkerFromBbox(it.bbox, s.span),
+  }))
+})
+
+const vizHintMissing = computed(
+  () =>
+    !!viewingHistoryId.value &&
+    !!v3TaskId.value &&
+    !!v3Payload.value &&
+    !vizObjectUrl.value &&
+    !vizLoading.value &&
+    !historySchematicSpec.value &&
+    collectNumberedBoxesFromPayload(v3Payload.value).length > 0,
+)
+
+/** 检测报告「各区域明细」：不列出「正常」区域，仅展示可疑/篡改等需关注项，序号与全图检测一致 */
+const reportMultiDetailRows = computed(() => {
+  const multi = v3Payload.value?.multi
+  if (!multi?.length) return [] as { item: V3ResultItem; regionNo: number }[]
+  const out: { item: V3ResultItem; regionNo: number }[] = []
+  for (let i = 0; i < multi.length; i++) {
+    const m = multi[i]
+    if ((m.result || '').trim() === '正常') continue
+    out.push({ item: m, regionNo: i + 1 })
+  }
+  return out
+})
+
+const regionLabelMetrics = computed(() => {
+  const w = imageNatural.value.w || 800
+  const fs = Math.max(12, Math.min(24, w * 0.022))
+  const r = fs * 0.55
+  return { fs, r }
+})
+
+function regionMarkerCenter(bbox: readonly [number, number, number, number]) {
+  const { r } = regionLabelMetrics.value
+  const x1 = bbox[0]
+  const y1 = bbox[1]
+  const bw = bbox[2]
+  const bh = bbox[3]
+  let cx = x1 + r + 3
+  let cy = y1 + r + 3
+  const minX = x1 + r + 1
+  const maxX = x1 + bw - r - 1
+  const minY = y1 + r + 1
+  const maxY = y1 + bh - r - 1
+  if (maxX >= minX) cx = Math.min(maxX, Math.max(minX, cx))
+  else cx = x1 + bw / 2
+  if (maxY >= minY) cy = Math.min(maxY, Math.max(minY, cy))
+  else cy = y1 + bh / 2
+  return { cx, cy }
+}
+
+const REGION_STROKES = ['#1d4ed8', '#0d9488', '#7c3aed', '#c2410c'] as const
+function regionStrokeForIndex(n: number) {
+  return REGION_STROKES[(n - 1) % REGION_STROKES.length]
+}
+
+const REGION_DASH = ['7 5', '4 4', '10 4', '3 3'] as const
+function regionDashForIndex(n: number) {
+  return REGION_DASH[(n - 1) % REGION_DASH.length]
+}
+
+const previewNumberedRenderList = computed(() =>
+  previewNumberedRegions.value.map((it) => ({
+    ...it,
+    ...regionMarkerCenter(it.bbox),
+  })),
+)
+
+const previewLightboxOpen = ref(false)
+
+function openPreviewLightbox() {
+  if (!activePreviewUrl.value) return
+  previewLightboxOpen.value = true
+  window.addEventListener('keydown', onPreviewLightboxKeydown)
+}
+
+function closePreviewLightbox() {
+  previewLightboxOpen.value = false
+  window.removeEventListener('keydown', onPreviewLightboxKeydown)
+}
+
+function onPreviewLightboxKeydown(e: KeyboardEvent) {
+  if (e.key === 'Escape') closePreviewLightbox()
+}
+
+function onPreviewImgClick() {
+  if (v3SpecifyBbox.value || busy.value) return
+  openPreviewLightbox()
+}
+
+const userBboxXYWH = computed(() => {
+  if (!userBbox.value) return null
+  const [x1, y1, x2, y2] = userBbox.value
+  return [x1, y1, x2 - x1, y2 - y1] as const
+})
+
+function formatHistoryTime(iso: string) {
+  if (!iso || iso === '—') return '—'
+  try {
+    const d = new Date(iso.replace(' ', 'T'))
+    if (Number.isNaN(d.getTime())) return iso
+    return d.toLocaleString('zh-CN', {
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+    })
+  } catch {
+    return iso
+  }
+}
+
+async function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const id = window.setTimeout(resolve, ms)
+    if (!signal) return
+    const onAbort = () => {
+      window.clearTimeout(id)
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    if (signal.aborted) return onAbort()
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
+async function waitForV3Completion(
+  taskId: string,
+  signal?: AbortSignal,
+): Promise<{
+  result?: V3ResultItem | null
+  multi_results?: V3ResultItem[]
+  error_msg?: string | null
+}> {
+  for (;;) {
+    const data = await getV3Result(taskId, { signal })
+    const st = (data.status || '').toUpperCase()
+    if (st === 'COMPLETED') return data
+    if (st === 'FAILED' || st === 'CANCELED') {
+      throw new Error(data.error_msg || `任务状态异常：${st || 'UNKNOWN'}`)
+    }
+    pollStatus.value = st === 'PROCESSING' ? '正在识别并定位可疑区域…' : '任务已提交，正在排队…'
+    await waitForPoll(st === 'PROCESSING' ? 1100 : 800, signal)
+  }
+}
+
+function truncateName(name: string, max = 18) {
+  if (name.length <= max) return name
+  return `${name.slice(0, max - 1)}…`
+}
+
+function historyResultLabel(entry: DetectionHistoryEntry) {
+  if (entry.status === 'FAILED') return '失败'
+  const r = entry.payload.result?.result
+  if (r) return r
+  const m = entry.payload.multi?.[0]?.result
+  if (m) return m
+  return '已完成'
+}
+
+function historyPillClass(entry: DetectionHistoryEntry) {
+  if (entry.status === 'FAILED') return '失败'
+  const label = historyResultLabel(entry)
+  if (label === '正常' || label === '可疑' || label === '篡改' || label === '错误') {
+    return label
+  }
+  return ''
+}
+
+function isHistoryRowActive(entry: DetectionHistoryEntry) {
+  if (viewingHistoryId.value === entry.id) return true
+  if (
+    !viewingHistoryId.value &&
+    entry.taskId &&
+    v3TaskId.value === entry.taskId &&
+    v3Payload.value
+  ) {
+    return true
+  }
+  return false
+}
+
+async function goHistoryPage(page: number) {
+  if (historyLoading.value) return
+  if (page < 1) return
+  if (historyTotal.value > 0) {
+    const tp = Math.ceil(historyTotal.value / HISTORY_PAGE_SIZE)
+    if (page > tp) return
+  }
+  historyLoading.value = true
+  historyError.value = null
+  try {
+    const r = await fetchDetectionHistory(page, HISTORY_PAGE_SIZE)
+    historyEntries.value = r.items.map(mapApiRecordToEntry)
+    historyTotal.value = r.total
+    historyPage.value = page
+  } catch (e) {
+    historyError.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+async function refreshHistoryList() {
+  await goHistoryPage(1)
+}
+
+/** 历史列表项来自 Vue 响应式数据，不能用 structuredClone（Proxy 不可克隆） */
+function clonePayloadForView(
+  p: DetectionHistoryEntry['payload'],
+): NonNullable<typeof v3Payload.value> {
+  return JSON.parse(JSON.stringify(toRaw(p))) as NonNullable<
+    typeof v3Payload.value
+  >
+}
+
+async function applyHistoryEntry(entry: DetectionHistoryEntry) {
+  if (busy.value) return
+  errorMsg.value = null
+  pollStatus.value = ''
+  viewingHistoryId.value = entry.id
+  imageNatural.value = { w: 0, h: 0 }
+  historyPreviewUrl.value = entry.imageUrl ? resolveApiUrl(entry.imageUrl) : null
+  if (vizObjectUrl.value) {
+    URL.revokeObjectURL(vizObjectUrl.value)
+    vizObjectUrl.value = null
+  }
+  if (entry.status === 'FAILED') {
+    v3TaskId.value = entry.taskId || null
+    v3Payload.value = null
+    errorMsg.value = entry.payload.error_msg || '该条检测未成功完成'
+    return
+  }
+  v3TaskId.value = entry.taskId || null
+  v3Payload.value = clonePayloadForView(entry.payload)
+  if (entry.taskId) {
+    void loadViz(entry.taskId)
+  }
+}
+
+onMounted(() => {
+  void refreshHistoryList()
+})
+
+async function runV3() {
+  if (!file.value) {
+    errorMsg.value = '请先选择一张图片'
+    return
+  }
+  busy.value = true
+  errorMsg.value = null
+  viewingHistoryId.value = null
+  v3Payload.value = null
+  v3TaskId.value = null
+  if (vizObjectUrl.value) {
+    URL.revokeObjectURL(vizObjectUrl.value)
+    vizObjectUrl.value = null
+  }
+  detectAbort.value?.abort()
+  const ac = new AbortController()
+  detectAbort.value = ac
+  pollStatus.value = ''
+  try {
+    /** 指定框模式传 bbox；默认不传，由后端自动 OCR 多区域检测 */
+    const bbox: BboxXYXY | null = v3SpecifyBbox.value
+      ? (userBbox.value ?? fullImageBbox())
+      : null
+    if (v3SpecifyBbox.value && !bbox) {
+      errorMsg.value = v3SpecifyBbox.value
+        ? '请框选区域或等待图片在预览区加载完成'
+        : '请等待图片在预览区加载完成后再分析（需读取尺寸以提交整图区域）'
+      return
+    }
+    pollStatus.value = '正在提交任务…'
+    const submit = await submitV3Detect(file.value, bbox, {
+      signal: ac.signal,
+    })
+    const taskId = submit.task_id?.trim()
+    if (!taskId) {
+      throw new Error('服务端未返回任务 ID')
+    }
+    v3TaskId.value = taskId
+    pollStatus.value = '任务已提交，正在排队…'
+    const data = await waitForV3Completion(taskId, ac.signal)
+    if (data.error_msg?.trim() && !data.result && !(data.multi_results?.length)) {
+      throw new Error(data.error_msg)
+    }
+    if (!data.result && !(data.multi_results?.length)) {
+      throw new Error(data.error_msg || '未返回检测结果')
+    }
+    v3Payload.value = {
+      result: data.result ?? null,
+      multi: data.multi_results,
+      error_msg: data.error_msg ?? null,
+    }
+    pollStatus.value = '分析完成'
+    viewingHistoryId.value = null
+    void refreshHistoryList()
+    if (v3TaskId.value) void loadViz(v3TaskId.value)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      pollStatus.value = '已取消'
+      return
+    }
+    errorMsg.value = e instanceof Error ? e.message : String(e)
+    pollStatus.value = ''
+  } finally {
+    detectAbort.value = null
+    busy.value = false
+  }
+}
+
+async function loadViz(taskId: string): Promise<boolean> {
+  vizLoading.value = true
+  try {
+    const blob = await getVisualizationBlob(taskId)
+    if (vizObjectUrl.value) URL.revokeObjectURL(vizObjectUrl.value)
+    vizObjectUrl.value = URL.createObjectURL(blob)
+    return true
+  } catch {
+    vizObjectUrl.value = null
+    return false
+  } finally {
+    vizLoading.value = false
+  }
+}
+
+async function cancelTask() {
+  detectAbort.value?.abort()
+  const taskId = v3TaskId.value?.trim()
+  if (!taskId) return
+  try {
+    await deleteV3Task(taskId)
+  } catch {
+    // ignore cancel races; local polling has already been aborted
+  }
+}
+
+onUnmounted(() => {
+  detectAbort.value?.abort()
+  window.removeEventListener('keydown', onPreviewLightboxKeydown)
+  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  if (vizObjectUrl.value) URL.revokeObjectURL(vizObjectUrl.value)
+})
+</script>
+
+<template>
+  <div class="shell">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true" />
+          <div>
+            <h1 class="brand-title">图像真伪检测</h1>
+            <p class="brand-sub">检测图像是否存在后期篡改风险</p>
+          </div>
+        </div>
+        <div class="topbar-meta">
+          <span class="meta-label">检测服务</span>
+          <span class="meta-value" :title="serviceDisplay">{{ serviceDisplay }}</span>
+        </div>
+      </div>
+    </header>
+
+    <div class="main">
+      <aside class="sidebar">
+        <section class="card side-section">
+          <h2 class="section-title">检测方式</h2>
+          <div class="mode-grid">
+            <div class="mode-panel" role="status">
+              <span class="mode-tile-title">智能全图分析</span>
+              <span class="mode-tile-desc"
+                >自动查找关键区域并汇总结论，适合证件、票据等复杂画面</span
+              >
+            </div>
+          </div>
+        </section>
+
+        <section class="card side-section">
+          <h2 class="section-title">上传图片</h2>
+          <label
+            class="drop-zone"
+            :class="{ over: dragOver, hasFile: !!file }"
+            @dragover="onDragOver"
+            @dragleave="onDragLeave"
+            @drop="onDrop"
+          >
+            <input
+              class="sr-only"
+              type="file"
+              accept="image/*"
+              @change="onFileChange"
+            />
+            <template v-if="!file">
+              <span class="dz-icon" aria-hidden="true">＋</span>
+              <span class="dz-text">点击选择或拖拽图片到此处</span>
+              <span class="dz-hint">支持常见图片格式</span>
+            </template>
+            <template v-else>
+              <span class="dz-name">{{ file.name }}</span>
+              <span class="dz-change">点击更换图片</span>
+            </template>
+          </label>
+
+          <div class="option-row">
+            <label class="switch-label">
+              <input v-model="v3SpecifyBbox" type="checkbox" class="switch-input" />
+              <span class="switch-ui" />
+              <span class="switch-text">仅分析我框出的区域</span>
+            </label>
+            <p class="option-hint">
+              关闭此项时，将由系统自动在图中选取多个关键位置分别判断。
+            </p>
+          </div>
+
+          <div v-if="v3SpecifyBbox" class="bbox-hint">
+            <p>
+              在右侧预览区按住拖拽即可框选。开启本模式后请先框选再开始分析；也可框选整张图范围。
+            </p>
+            <p v-if="userBbox" class="bbox-coords">
+              已选区域（像素）：{{ userBbox.join(', ') }}
+            </p>
+          </div>
+        </section>
+
+        <section class="card side-section actions-card">
+          <button
+            type="button"
+            class="btn btn-primary"
+            :disabled="busy || !file"
+            @click="runV3"
+          >
+            <span v-if="busy" class="btn-spinner" />
+            {{ busy ? '分析中…' : '开始分析' }}
+          </button>
+          <button
+            v-if="busy"
+            type="button"
+            class="btn btn-secondary"
+            @click="cancelTask"
+          >
+            取消分析
+          </button>
+
+          <div v-if="pollStatus" class="status-line">
+            <span class="status-dot" :class="{ pulse: busy }" />
+            {{ pollStatus }}
+          </div>
+          <p v-if="errorMsg" class="alert">{{ errorMsg }}</p>
+        </section>
+      </aside>
+
+      <div class="workspace-wrap">
+      <main class="workspace">
+        <section class="card workspace-card">
+          <div class="workspace-head">
+            <h2 class="section-title tight">预览</h2>
+            <div class="workspace-head-tags">
+              <span v-if="viewingHistoryId" class="workspace-tip workspace-tip-muted"
+                >历史记录预览</span
+              >
+              <span v-if="v3SpecifyBbox" class="workspace-tip">框选模式已开启</span>
+              <button
+                v-if="activePreviewUrl"
+                type="button"
+                class="btn-preview-zoom"
+                @click="openPreviewLightbox"
+              >
+                放大查看
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-if="activePreviewUrl"
+            class="stage"
+            @mouseleave="drawing ? onDrawUp() : null"
+          >
+            <img
+              ref="imgRef"
+              :src="activePreviewUrl"
+              alt="待检测图片"
+              class="preview-img"
+              :class="{ 'preview-img-zoomin': !v3SpecifyBbox && !busy }"
+              draggable="false"
+              @load="onImgLoad"
+              @error="onImgError"
+              @click="onPreviewImgClick"
+            />
+            <svg
+              v-if="imageNatural.w"
+              class="overlay-svg"
+              :viewBox="`0 0 ${imageNatural.w} ${imageNatural.h}`"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <g v-if="previewNumberedRenderList.length">
+                <g v-for="item in previewNumberedRenderList" :key="'rg' + item.n">
+                  <rect
+                    :x="item.bbox[0]"
+                    :y="item.bbox[1]"
+                    :width="item.bbox[2]"
+                    :height="item.bbox[3]"
+                    fill="rgba(37, 99, 235, 0.06)"
+                    :stroke="regionStrokeForIndex(item.n)"
+                    :stroke-width="Math.max(1.1, overlayStroke * 0.75)"
+                    :stroke-dasharray="regionDashForIndex(item.n)"
+                  />
+                  <circle
+                    :cx="item.cx"
+                    :cy="item.cy"
+                    :r="regionLabelMetrics.r"
+                    fill="#1d4ed8"
+                    stroke="#fff"
+                    :stroke-width="Math.max(1, overlayStroke * 0.35)"
+                  />
+                  <text
+                    :x="item.cx"
+                    :y="item.cy"
+                    text-anchor="middle"
+                    dominant-baseline="central"
+                    :font-size="regionLabelMetrics.fs * 0.88"
+                    font-weight="700"
+                    fill="#fff"
+                    style="font-family: system-ui, -apple-system, sans-serif"
+                  >
+                    {{ item.n }}
+                  </text>
+                </g>
+              </g>
+              <rect
+                v-if="userBboxXYWH && !v3Payload"
+                :x="userBboxXYWH[0]"
+                :y="userBboxXYWH[1]"
+                :width="userBboxXYWH[2]"
+                :height="userBboxXYWH[3]"
+                fill="rgba(14, 165, 233, 0.12)"
+                stroke="#0ea5e9"
+                :stroke-width="overlayStroke"
+                stroke-dasharray="8 6"
+              />
+              <rect
+                v-if="drawPreviewBbox"
+                :x="drawPreviewBbox.x1"
+                :y="drawPreviewBbox.y1"
+                :width="drawPreviewBbox.x2 - drawPreviewBbox.x1"
+                :height="drawPreviewBbox.y2 - drawPreviewBbox.y1"
+                fill="rgba(14, 165, 233, 0.18)"
+                stroke="#0284c7"
+                :stroke-width="overlayStroke"
+              />
+            </svg>
+            <div
+              v-if="v3SpecifyBbox"
+              class="draw-layer"
+              @mousedown.prevent="onDrawDown"
+              @mousemove="onDrawMove"
+              @mouseup="onDrawUp"
+            />
+          </div>
+
+          <div
+            v-else-if="viewingHistoryId && v3Payload && historySchematicSpec"
+            class="history-schematic-wrap"
+          >
+            <p class="history-schematic-title">区域位置示意</p>
+            <p class="history-schematic-note">
+              无本机原图且未从服务器取回标注照片时，仅根据检测坐标绘制框线（与接口像素坐标一致，非真实底图）。
+            </p>
+            <svg
+              class="history-schematic-svg"
+              :viewBox="historySchematicSpec.viewBox"
+              preserveAspectRatio="xMidYMid meet"
+            >
+              <g v-for="item in historySchematicRenderList" :key="'hs' + item.n">
+                <rect
+                  :x="item.bbox[0]"
+                  :y="item.bbox[1]"
+                  :width="item.bbox[2]"
+                  :height="item.bbox[3]"
+                  fill="rgba(37, 99, 235, 0.08)"
+                  :stroke="regionStrokeForIndex(item.n)"
+                  stroke-width="2"
+                  :stroke-dasharray="regionDashForIndex(item.n)"
+                />
+                <circle
+                  :cx="item.cx"
+                  :cy="item.cy"
+                  :r="item.r"
+                  fill="#1d4ed8"
+                  stroke="#fff"
+                  stroke-width="1.5"
+                />
+                <text
+                  :x="item.cx"
+                  :y="item.cy"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                  :font-size="item.fs * 0.88"
+                  font-weight="700"
+                  fill="#fff"
+                  style="font-family: system-ui, -apple-system, sans-serif"
+                >
+                  {{ item.n }}
+                </text>
+              </g>
+            </svg>
+          </div>
+
+          <div
+            v-else-if="viewingHistoryId && v3Payload && vizLoading"
+            class="empty-preview history-preview-placeholder"
+          >
+            <p>正在加载标注示意图…</p>
+          </div>
+
+          <div
+            v-else-if="viewingHistoryId && v3Payload"
+            class="empty-preview history-preview-placeholder"
+          >
+            <p>当前为历史记录</p>
+            <p class="history-preview-hint">
+              原图未保存在本机。下方可查看当时结论与标注示意图（若服务端仍保留任务）；若无坐标数据则仅显示文字结论。
+            </p>
+          </div>
+          <div v-else class="empty-preview">
+            <p>请先在左侧上传一张图片</p>
+          </div>
+        </section>
+
+        <section class="card workspace-card results-card">
+          <h2 class="section-title tight">检测报告</h2>
+
+          <div v-if="v3Payload" class="report">
+            <template v-if="v3Payload.result">
+              <div class="report-head">
+                <span
+                  class="pill"
+                  :class="v3Payload.result.result || undefined"
+                  >{{ v3Payload.result.result || '—' }}</span
+                >
+                <div class="meter-wrap">
+                  <div class="meter-label">
+                    <span>风险倾向</span>
+                    <span>{{
+                      ((v3Payload.result.confidence ?? 0) * 100).toFixed(1)
+                    }}%</span>
+                  </div>
+                  <div class="meter">
+                    <div
+                      class="meter-fill"
+                      :style="{
+                        width: `${Math.min(
+                          100,
+                          Math.max(0, (v3Payload.result.confidence ?? 0) * 100),
+                        )}%`,
+                      }"
+                    />
+                  </div>
+                </div>
+              </div>
+              <p class="report-reason">{{ v3Payload.result.reason || '—' }}</p>
+            </template>
+
+            <div v-if="reportMultiDetailRows.length" class="multi-block">
+              <h3 class="multi-heading">各区域明细</h3>
+              <div class="multi-scroll">
+                <ul class="multi-list">
+                  <li v-for="row in reportMultiDetailRows" :key="row.regionNo">
+                    <div class="multi-li-top">
+                      <span class="region-idx">{{ row.regionNo }}号</span>
+                      <span class="pill sm" :class="row.item.result || undefined">{{
+                        row.item.result || '—'
+                      }}</span>
+                      <span class="multi-confidence"
+                        >{{ ((row.item.confidence ?? 0) * 100).toFixed(1) }}%</span
+                      >
+                    </div>
+                    <p class="multi-reason">{{ row.item.reason }}</p>
+                  </li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div v-if="vizObjectUrl" class="viz-wrap">
+            <h3 class="viz-heading">标注示意图</h3>
+            <div class="viz-frame">
+              <img :src="vizObjectUrl" alt="检测标注示意" class="viz-img" />
+            </div>
+          </div>
+
+          <p v-if="vizHintMissing" class="viz-miss-hint">
+            本条任务的标注图在服务端已过期或未生成，故无示意图；左侧「区域位置示意」或下方文字为当前可用信息。
+          </p>
+
+          <p
+            v-if="!v3Payload && !errorMsg && !busy"
+            class="empty-report"
+          >
+            完成检测后，将在此展示结论、说明与示意图。
+          </p>
+        </section>
+      </main>
+      </div>
+
+      <aside class="history-aside" aria-label="历史记录">
+        <section class="card side-section history-card">
+          <div class="history-head">
+            <h2 class="section-title history-title-merged">历史记录</h2>
+            <button
+              type="button"
+              class="btn-text-refresh"
+              :disabled="historyLoading"
+              @click="refreshHistoryList"
+            >
+              {{ historyLoading ? '加载中…' : '刷新' }}
+            </button>
+          </div>
+          <p class="history-api-hint">来自服务端近 7 日记录（分页）</p>
+          <p v-if="historyError" class="history-error">{{ historyError }}</p>
+          <p
+            v-if="!historyLoading && !historyEntries.length && !historyError"
+            class="history-empty"
+          >
+            暂无记录。
+          </p>
+          <ul v-if="historyEntries.length" class="history-list" aria-label="检测历史列表">
+            <li
+              v-for="h in historyEntries"
+              :key="h.id"
+              class="history-row"
+              :class="{ active: isHistoryRowActive(h) }"
+            >
+              <button
+                type="button"
+                class="history-main"
+                @click="applyHistoryEntry(h)"
+              >
+                <span class="history-time">{{ formatHistoryTime(h.savedAt) }}</span>
+                <span class="history-file" :title="h.fileName">{{
+                  truncateName(h.fileName)
+                }}</span>
+                <span class="pill sm history-pill" :class="historyPillClass(h)">{{
+                  historyResultLabel(h)
+                }}</span>
+              </button>
+            </li>
+          </ul>
+          <div v-if="historyTotal > 0" class="history-footer">
+            <span class="history-count">
+              共 {{ historyTotal }} 条，第 {{ historyPage }} /
+              {{ historyTotalPages || 1 }} 页（每页最多 {{ HISTORY_PAGE_SIZE }} 条）
+            </span>
+            <div class="history-pager" role="navigation" aria-label="历史记录分页">
+              <button
+                type="button"
+                class="btn-history-page"
+                :disabled="historyLoading || !historyCanPrev"
+                @click="goHistoryPage(historyPage - 1)"
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                class="btn-history-page"
+                :disabled="historyLoading || !historyCanNext"
+                @click="goHistoryPage(historyPage + 1)"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        </section>
+      </aside>
+    </div>
+
+    <Teleport to="body">
+      <div
+        v-if="previewLightboxOpen && activePreviewUrl"
+        class="preview-lightbox"
+        role="dialog"
+        aria-modal="true"
+        aria-label="图片放大预览"
+        @click.self="closePreviewLightbox"
+      >
+        <button
+          type="button"
+          class="preview-lightbox-close"
+          aria-label="关闭"
+          @click="closePreviewLightbox"
+        >
+          ×
+        </button>
+        <img :src="activePreviewUrl || ''" alt="" class="preview-lightbox-img" />
+        <p class="preview-lightbox-hint">点击背景或 × 关闭，按 Esc 退出</p>
+      </div>
+    </Teleport>
+  </div>
+</template>
+
+<style scoped>
+.shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.topbar-inner {
+  max-width: 1420px;
+  margin: 0 auto;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.brand-mark {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: linear-gradient(145deg, #1d4ed8, #0ea5e9);
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.brand-title {
+  margin: 0;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+
+.brand-sub {
+  margin: 0.2rem 0 0;
+  font-size: 0.875rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.topbar-meta {
+  text-align: right;
+  min-width: 0;
+}
+
+.meta-label {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 0.25rem;
+}
+
+.meta-value {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  word-break: break-all;
+  font-family: ui-monospace, monospace;
+}
+
+.main {
+  flex: 1;
+  max-width: 1420px;
+  margin: 0 auto;
+  width: 100%;
+  padding: 1.5rem;
+  display: grid;
+  grid-template-columns: minmax(260px, 300px) minmax(0, 1fr) minmax(260px, 300px);
+  gap: 1.25rem;
+  align-items: start;
+}
+
+.workspace-wrap {
+  min-width: 0;
+}
+
+.history-aside {
+  min-width: 0;
+}
+
+.history-aside .history-card {
+  position: sticky;
+  top: 1.25rem;
+}
+
+@media (max-width: 1180px) {
+  .main {
+    grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
+  }
+
+  .history-aside {
+    grid-column: 1 / -1;
+    max-width: 720px;
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .history-aside .history-card {
+    position: static;
+  }
+
+  .history-list {
+    max-height: min(220px, 38vh);
+  }
+}
+
+@media (max-width: 960px) {
+  .main {
+    grid-template-columns: 1fr;
+    max-width: 640px;
+  }
+
+  .history-aside {
+    grid-column: auto;
+    max-width: none;
+  }
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.side-section {
+  padding: 1.25rem 1.35rem;
+}
+
+.section-title {
+  margin: 0 0 1rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+}
+
+.section-title.tight {
+  margin-bottom: 0.75rem;
+}
+
+.mode-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.mode-panel {
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  padding: 1.1rem 1.15rem;
+  min-height: 7.5rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--brand);
+  background: #eff6ff;
+  box-shadow: 0 0 0 1px var(--brand);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.mode-tile-title {
+  display: block;
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text);
+  margin-bottom: 0.25rem;
+}
+
+.mode-tile-desc {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 140px;
+  padding: 1rem;
+  border: 2px dashed #cbd5e1;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition:
+    border-color 0.15s,
+    background 0.15s;
+}
+
+.drop-zone:hover,
+.drop-zone.over {
+  border-color: var(--brand);
+  background: #f8fafc;
+}
+
+.drop-zone.hasFile {
+  min-height: auto;
+  align-items: flex-start;
+  border-style: solid;
+  border-color: var(--border);
+  background: var(--surface-2);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dz-icon {
+  font-size: 1.75rem;
+  color: var(--brand);
+  line-height: 1;
+  margin-bottom: 0.35rem;
+}
+
+.dz-text {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.dz-hint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  margin-top: 0.35rem;
+}
+
+.dz-name {
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--text);
+  word-break: break-all;
+  width: 100%;
+}
+
+.dz-change {
+  font-size: 0.75rem;
+  color: var(--brand);
+  margin-top: 0.5rem;
+}
+
+.option-row {
+  margin-top: 1rem;
+}
+
+.switch-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.6rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: var(--text);
+}
+
+.switch-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.switch-ui {
+  width: 38px;
+  height: 22px;
+  border-radius: 11px;
+  background: #e2e8f0;
+  flex-shrink: 0;
+  margin-top: 1px;
+  position: relative;
+  transition: background 0.15s;
+}
+
+.switch-ui::after {
+  content: '';
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #fff;
+  top: 2px;
+  left: 2px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  transition: transform 0.15s;
+}
+
+.switch-input:checked + .switch-ui {
+  background: var(--brand);
+}
+
+.switch-input:checked + .switch-ui::after {
+  transform: translateX(16px);
+}
+
+.switch-text {
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+.option-hint {
+  margin: 0.5rem 0 0 2.35rem;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  line-height: 1.45;
+}
+
+.bbox-hint {
+  margin-top: 1rem;
+  padding: 0.75rem 0.85rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.bbox-coords {
+  margin: 0.5rem 0 0;
+  font-family: ui-monospace, monospace;
+  font-size: 0.75rem;
+  color: var(--brand);
+}
+
+.actions-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.history-card {
+  padding-bottom: 1rem;
+}
+
+.history-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.history-head .section-title {
+  margin: 0;
+}
+
+.history-title-merged {
+  margin-bottom: 0 !important;
+}
+
+.btn-text-refresh {
+  padding: 0.2rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--brand);
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btn-text-refresh:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+.btn-text-refresh:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.history-api-hint {
+  margin: 0 0 0.5rem;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.history-error {
+  margin: 0 0 0.5rem;
+  padding: 0.45rem 0.5rem;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #991b1b;
+  background: #fef2f2;
+  border-radius: var(--radius-sm);
+  border: 1px solid #fecaca;
+}
+
+.history-empty {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.history-footer {
+  margin-top: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: stretch;
+}
+
+.history-pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.history-count {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.btn-history-page {
+  flex: 1;
+  min-width: 0;
+  padding: 0.4rem 0.5rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.btn-history-page:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.btn-history-page:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: min(36vh, 280px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+@media (min-width: 1181px) {
+  .history-aside .history-list {
+    max-height: calc(100vh - 11.5rem);
+  }
+}
+
+.history-row {
+  display: flex;
+  align-items: stretch;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.history-row.active {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 1px var(--brand);
+}
+
+.history-main {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 0.45rem 0.5rem;
+  text-align: left;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font: inherit;
+}
+
+.history-main:hover {
+  background: #f8fafc;
+}
+
+.history-time {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.history-file {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-pill {
+  align-self: flex-start;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.7rem 1.15rem;
+  border-radius: var(--radius-sm);
+  font-size: 0.95rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  border: none;
+  transition:
+    opacity 0.15s,
+    background 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--brand);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--brand-hover);
+}
+
+.btn-secondary {
+  background: var(--surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.btn-spinner {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #22c55e;
+}
+
+.status-dot.pulse {
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.alert {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: var(--radius-sm);
+  color: #991b1b;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  min-width: 0;
+}
+
+@media (min-width: 1040px) {
+  .workspace {
+    display: grid;
+    grid-template-columns: minmax(260px, 1fr) minmax(300px, 1.1fr);
+    gap: 1rem;
+    align-items: start;
+  }
+
+  .workspace .workspace-card {
+    min-width: 0;
+  }
+}
+
+.workspace-card {
+  padding: 1.25rem 1.35rem;
+}
+
+.workspace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.workspace-head .section-title {
+  margin: 0;
+}
+
+.workspace-head-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.workspace-tip {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--brand);
+  background: #eff6ff;
+  padding: 0.25rem 0.5rem;
+  border-radius: 4px;
+}
+
+.workspace-tip-muted {
+  color: #64748b;
+  background: #f1f5f9;
+}
+
+.stage {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #0f172a;
+}
+
+.preview-img {
+  display: block;
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  max-height: min(58vh, 580px);
+  margin: 0 auto;
+  object-fit: contain;
+  vertical-align: top;
+}
+
+.preview-img-zoomin {
+  cursor: zoom-in;
+}
+
+.btn-preview-zoom {
+  padding: 0.28rem 0.65rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--brand);
+  background: #fff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.btn-preview-zoom:hover {
+  background: #eff6ff;
+  border-color: var(--brand);
+}
+
+.overlay-svg {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.draw-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  cursor: crosshair;
+}
+
+.empty-preview {
+  min-height: 200px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.history-preview-placeholder {
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: center;
+  padding: 1.25rem 1rem;
+}
+
+.history-preview-hint {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  max-width: 300px;
+  color: var(--text-muted);
+}
+
+.history-schematic-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 200px;
+  padding: 0.75rem 0.65rem 0.85rem;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+}
+
+.history-schematic-title {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.history-schematic-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.history-schematic-svg {
+  width: 100%;
+  max-height: min(48vh, 480px);
+  min-height: 160px;
+  background: #f8fafc;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.results-card {
+  flex: 1;
+}
+
+.report {
+  padding: 0.25rem 0;
+}
+
+.report-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.pill {
+  display: inline-block;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-weight: 700;
+  font-size: 0.875rem;
+  background: #e2e8f0;
+  color: #334155;
+}
+
+.pill.sm {
+  font-size: 0.75rem;
+  padding: 0.2rem 0.5rem;
+}
+
+.pill.正常 {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.pill.可疑 {
+  background: #ffedd5;
+  color: #9a3412;
+}
+
+.pill.篡改 {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.pill.错误 {
+  background: #f1f5f9;
+  color: #475569;
+}
+
+.pill.失败 {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.meter-wrap {
+  flex: 1;
+  min-width: 160px;
+}
+
+.meter-label {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-bottom: 0.35rem;
+}
+
+.meter {
+  height: 8px;
+  border-radius: 4px;
+  background: #e2e8f0;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #0ea5e9, #1d4ed8);
+  transition: width 0.35s ease;
+}
+
+.report-reason {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.6;
+  color: var(--text);
+}
+
+.report-foot {
+  margin: 0.75rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  font-family: ui-monospace, monospace;
+}
+
+.report-foot.inline {
+  display: block;
+  margin-top: 0.25rem;
+}
+
+.multi-block {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.multi-scroll {
+  max-height: min(26vh, 220px);
+  overflow-y: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  padding: 0 0.5rem;
+}
+
+.multi-heading {
+  margin: 0 0 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.multi-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.multi-list li {
+  padding: 0.45rem 0;
+  border-bottom: 1px solid #f1f5f9;
+  font-size: 0.8rem;
+  color: var(--text);
+  line-height: 1.45;
+}
+
+.multi-list li:last-child {
+  border-bottom: none;
+}
+
+.multi-li-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.5rem;
+}
+
+.region-idx {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 2.1rem;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.72rem;
+  font-weight: 800;
+  color: #1e40af;
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.multi-confidence {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.multi-reason {
+  margin: 0.35rem 0 0;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.viz-miss-hint {
+  margin: 0.75rem 0 0;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  border-radius: var(--radius-sm);
+}
+
+.viz-wrap {
+  margin-top: 1rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--border);
+}
+
+.viz-frame {
+  max-height: min(42vh, 380px);
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: #f8fafc;
+  text-align: center;
+  line-height: 0;
+}
+
+.viz-heading {
+  margin: 0 0 0.65rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.viz-img {
+  max-width: 100%;
+  width: auto;
+  height: auto;
+  max-height: min(42vh, 380px);
+  object-fit: contain;
+  vertical-align: middle;
+}
+
+.empty-report {
+  margin: 0;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.preview-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(15, 23, 42, 0.92);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 3rem 1rem 1.5rem;
+  box-sizing: border-box;
+}
+
+.preview-lightbox-img {
+  max-width: 96vw;
+  max-height: calc(100vh - 6rem);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);
+}
+
+.preview-lightbox-close {
+  position: fixed;
+  top: 0.85rem;
+  right: 1rem;
+  width: 2.5rem;
+  height: 2.5rem;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #f8fafc;
+  font-size: 1.75rem;
+  line-height: 1;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.preview-lightbox-close:hover {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.preview-lightbox-hint {
+  margin: 0.85rem 0 0;
+  font-size: 0.78rem;
+  color: #94a3b8;
+  text-align: center;
+}
+</style>
