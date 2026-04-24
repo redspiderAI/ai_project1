@@ -325,7 +325,7 @@
               <tr>
                 <th class="emap-cmp-col-rank">排名</th>
                 <th class="emap-cmp-col-smelter">冶炼厂名称</th>
-                <th class="emap-cmp-col-money">单价</th>
+                <th class="emap-cmp-col-cats">各品种单价</th>
                 <th class="emap-cmp-col-money">总回收价</th>
                 <th class="emap-cmp-col-money">总运费</th>
                 <th class="emap-cmp-col-money">利润</th>
@@ -340,10 +340,12 @@
               <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
                 <td class="emap-cmp-col-rank">{{ row.rank }}</td>
                 <td class="emap-cmp-col-smelter">{{ row.smelter }}</td>
-                <td>¥ {{ formatNum(row.unitPrice) }}</td>
-                <td>¥ {{ formatNum(row.totalRecovery) }}</td>
-                <td>¥ {{ formatNum(row.totalFreight) }}</td>
-                <td class="text-success fw-semibold">¥ {{ formatNum(row.netProfit) }}</td>
+                <td class="emap-cmp-col-cats" v-html="formatComparisonCategoryPricesHtml(row)"></td>
+                <td class="emap-cmp-col-money text-end">{{ formatComparisonTotalRecoveryCell(row.totalRecovery) }}</td>
+                <td class="emap-cmp-col-money text-end">{{ formatComparisonFreightCell(row.totalFreight) }}</td>
+                <td class="emap-cmp-col-money text-end text-success fw-semibold">
+                  ¥ {{ toDisplayNum(row.netProfit).toLocaleString('zh-CN') }}
+                </td>
               </tr>
             </tbody>
           </table>
@@ -493,6 +495,8 @@ type ComparisonRankItem = {
   /** 后端「总运费」；无明细时由旧逻辑推算 */
   totalFreight: number
   qtySum: number
+  /** 与嵌入页「智能比价」各品种单价列一致：品类名 → 单价 */
+  categoryPrices?: Record<string, number | null>
 }
 
 /** 与「送货量预测」折线图弹窗下方展示一致 */
@@ -1688,6 +1692,62 @@ function formatNum(n: number): string {
   return toDisplayNum(n).toLocaleString('zh-CN', { maximumFractionDigits: 2 })
 }
 
+/** 与嵌入页 Ut() 一致：明细行取价口径 */
+function pickDetailUnitPrice(row: Record<string, unknown>, priceMode: 'base' | 'tax3'): number | null {
+  if (priceMode === 'tax3') {
+    return pickNumber(row, [
+      '含3%税价',
+      '3%含税价',
+      '含税价',
+      '单价',
+      '基准价',
+      '报价',
+      'unit_price',
+      '最优价',
+      '3pct_price',
+    ])
+  }
+  return pickNumber(row, [
+    '单价',
+    '基准价',
+    '报价',
+    'unit_price',
+    '最优价',
+    '不含税价',
+    'base_price',
+  ])
+}
+
+function formatComparisonCategoryPricesHtml(row: ComparisonRankItem): string {
+  const raw = row.categoryPrices
+  const entries = raw ? Object.entries(raw) : []
+  if (!entries.length) {
+    if (row.unitPrice > 0) {
+      return `${escapeHtml('均价')}: ¥${Number(toDisplayNum(row.unitPrice)).toLocaleString('zh-CN')}`
+    }
+    return '—'
+  }
+  return entries
+    .map(([cat, v]) => {
+      const label = escapeHtml(String(cat || '').trim() || '—')
+      if (v == null || !Number.isFinite(v)) return `${label}: —`
+      return `${label}: ¥${Number(v).toLocaleString('zh-CN')}`
+    })
+    .join('<br>')
+}
+
+/** 与嵌入页：总回收价为 0 或无效时显示 — */
+function formatComparisonTotalRecoveryCell(n: number): string {
+  const i = Number(n)
+  if (!Number.isFinite(i) || i === 0) return '—'
+  return `¥${i.toLocaleString('zh-CN')}`
+}
+
+/** 与嵌入页：总运费保留两位小数 */
+function formatComparisonFreightCell(n: number): string {
+  return `¥${Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
 function clearComparisonOverlays() {
   cancelFlowOverlayAnimations()
   stopFlowAnimations()
@@ -1983,6 +2043,7 @@ function parseSmelterProfitRankArray(
 function mergeComparisonRanksWithDetailRows(
   ranks: ComparisonRankItem[],
   detailRows: Record<string, unknown>[],
+  priceMode: 'base' | 'tax3',
 ): ComparisonRankItem[] {
   if (!detailRows.length) return ranks
   return ranks.map((r) => {
@@ -1999,12 +2060,16 @@ function mergeComparisonRanksWithDetailRows(
       return name === r.smelter || name.includes(r.smelter) || r.smelter.includes(name)
     })
     if (!rows.length) return r
+    const categoryPrices: Record<string, number | null> = {}
     let totalRecovery = 0
     let totalFreight = 0
     let qtySum = 0
     let unitNum = 0
     let unitDen = 0
     for (const row of rows) {
+      const cat = pickStr(row, ['品类', 'category', '品种', '产品品种', 'category_name']) || '—'
+      const upDetail = pickDetailUnitPrice(row, priceMode)
+      categoryPrices[cat] = upDetail != null && Number.isFinite(upDetail) ? upDetail : null
       const qty = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数', 'weight']) ?? 0
       const up = pickNumber(row, ['单价', '基准价', '含3%税价', '报价', 'unit_price', '最优价'])
       const tot = pickNumber(row, ['总价', '报价金额', '物料总价', 'total_recovery', 'material_sum'])
@@ -2022,6 +2087,7 @@ function mergeComparisonRanksWithDetailRows(
       unitDen > 0 ? unitNum / unitDen : (pickNumber(rows[0]!, ['单价', '基准价', '报价']) ?? 0)
     return {
       ...r,
+      categoryPrices,
       unitPrice: toDisplayNum(unitPrice),
       totalRecovery: toDisplayNum(totalRecovery),
       totalFreight: toDisplayNum(totalFreight),
@@ -2130,11 +2196,13 @@ function rankingsFromComparisonResponse(
     priceMode,
   )
   if (fromApi.length) {
-    return rerankSequentially(mergeComparisonRanksWithDetailRows(fromApi, detailRows))
+    return rerankSequentially(mergeComparisonRanksWithDetailRows(fromApi, detailRows, priceMode))
   }
   for (const rows of walkObjectArraysDeep(payload ?? raw)) {
     const parsed = parseRankRowsLoose(rows, priceMode)
-    if (parsed.length) return rerankSequentially(parsed)
+    if (parsed.length) {
+      return rerankSequentially(mergeComparisonRanksWithDetailRows(parsed, detailRows, priceMode))
+    }
   }
   return aggregateComparisonRows(detailRows, priceMode)
 }
@@ -2158,6 +2226,7 @@ function aggregateComparisonRows(
       freightCount: number
       totalFreightSum: number
       qtySum: number
+      categoryPrices: Record<string, number | null>
     }
   >()
   for (const row of rows) {
@@ -2179,9 +2248,13 @@ function aggregateComparisonRows(
         freightCount: 0,
         totalFreightSum: 0,
         qtySum: 0,
+        categoryPrices: {},
       })
     }
     const g = grouped.get(key)!
+    const cat = pickStr(row, ['品类', 'category', '品种', '产品品种', 'category_name']) || '—'
+    const upLine = pickDetailUnitPrice(row, priceMode)
+    g.categoryPrices[cat] = upLine != null && Number.isFinite(upLine) ? upLine : null
     g.materialSum += unitPrice * Math.max(0, qty)
     g.freightSum += freight
     g.freightCount += 1
@@ -2214,6 +2287,7 @@ function aggregateComparisonRows(
         totalRecovery: toDisplayNum(g.materialSum),
         totalFreight: toDisplayNum(totalFreightFromLine),
         qtySum: toDisplayNum(g.qtySum),
+        categoryPrices: g.categoryPrices,
       }
     })
     .sort((a, b) => b.netProfit - a.netProfit)
@@ -3629,15 +3703,25 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-table .emap-cmp-col-smelter {
-  width: 26%;
+  width: 22%;
   max-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.emap-cmp-table .emap-cmp-col-cats {
+  width: 28%;
+  white-space: normal;
+  line-height: 1.45;
+  word-break: break-word;
+  vertical-align: top;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 .emap-cmp-table .emap-cmp-col-money {
-  width: 18.5%;
+  width: 14.5%;
   white-space: nowrap;
 }
 
