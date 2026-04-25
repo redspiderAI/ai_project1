@@ -341,9 +341,9 @@
                 <td class="emap-cmp-col-rank">{{ row.rank }}</td>
                 <td class="emap-cmp-col-smelter">{{ row.smelter }}</td>
                 <td class="emap-cmp-col-cats" v-html="formatComparisonCategoryPricesHtml(row)"></td>
-                <td class="emap-cmp-col-money text-end">{{ formatComparisonTotalRecoveryCell(row.totalRecovery) }}</td>
-                <td class="emap-cmp-col-money text-end">{{ formatComparisonFreightCell(row.totalFreight) }}</td>
-                <td class="emap-cmp-col-money text-end text-success fw-semibold">
+                <td class="emap-cmp-col-money">{{ formatComparisonTotalRecoveryCell(row.totalRecovery) }}</td>
+                <td class="emap-cmp-col-money">{{ formatComparisonFreightCell(row.totalFreight) }}</td>
+                <td class="emap-cmp-col-money text-success fw-semibold">
                   ¥ {{ toDisplayNum(row.netProfit).toLocaleString('zh-CN') }}
                 </td>
               </tr>
@@ -3692,6 +3692,7 @@ onBeforeUnmount(() => {
 
 .emap-cmp-table th,
 .emap-cmp-table td {
+  text-align: center;
   vertical-align: middle;
   padding-left: 6px;
   padding-right: 6px;
@@ -3715,7 +3716,7 @@ onBeforeUnmount(() => {
   white-space: normal;
   line-height: 1.45;
   word-break: break-word;
-  vertical-align: top;
+  vertical-align: middle;
   padding-top: 8px;
   padding-bottom: 8px;
 }

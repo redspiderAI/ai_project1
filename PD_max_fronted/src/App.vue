@@ -5,7 +5,6 @@ import {
   fetchDetectionHistory,
   getV3Result,
   getVisualizationBlob,
-  resolveApiUrl,
   submitV3Detect,
   type BboxXYXY,
   type V3ResultItem,
@@ -63,14 +62,6 @@ const viewingHistoryId = ref<string | null>(null)
 /** 同步检测进行中时用于取消 fetch */
 const detectAbort = ref<AbortController | null>(null)
 
-const serviceDisplay = computed(() => {
-  const apiBase = String(import.meta.env.VITE_API_BASE ?? '').trim()
-  if (apiBase) return apiBase.replace(/\/$/, '')
-  const proxyTarget = String(import.meta.env.VITE_PROXY_TARGET ?? '').trim()
-  if (proxyTarget) return `vite-proxy -> ${proxyTarget.replace(/\/$/, '')}`
-  return 'http://111.229.25.160:8002'
-})
-
 const activePreviewUrl = computed(() =>
   viewingHistoryId.value ? historyPreviewUrl.value : previewUrl.value,
 )
@@ -121,6 +112,10 @@ function resetResults() {
     vizObjectUrl.value = null
   }
   v3TaskId.value = null
+}
+
+async function waitMs(ms: number): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, ms))
 }
 
 function onImgLoad() {
@@ -539,7 +534,18 @@ async function applyHistoryEntry(entry: DetectionHistoryEntry) {
   pollStatus.value = ''
   viewingHistoryId.value = entry.id
   imageNatural.value = { w: 0, h: 0 }
-  historyPreviewUrl.value = entry.imageUrl ? resolveApiUrl(entry.imageUrl) : null
+  // 后端返回的 imageUrl 应为完整的资源路径（通常以 /ai-detection 开头），
+  // 前端不得再统一 prepend 公共 /api/v1 前缀，避免生成错误路径。
+  const raw = (entry.imageUrl ?? '').trim()
+  if (!raw) {
+    historyPreviewUrl.value = null
+  } else if (/^https?:\/\//i.test(raw) || /^\/\//.test(raw) || raw.startsWith('/')) {
+    // 绝对 URL 或以 / 开头的本域路径，直接使用
+    historyPreviewUrl.value = raw
+  } else {
+    // 相对路径（极少数），在前面补一个斜杠以成为同域绝对路径
+    historyPreviewUrl.value = '/' + raw
+  }
   if (vizObjectUrl.value) {
     URL.revokeObjectURL(vizObjectUrl.value)
     vizObjectUrl.value = null
@@ -632,10 +638,31 @@ async function runV3() {
 async function loadViz(taskId: string): Promise<boolean> {
   vizLoading.value = true
   try {
-    const blob = await getVisualizationBlob(taskId)
-    if (vizObjectUrl.value) URL.revokeObjectURL(vizObjectUrl.value)
-    vizObjectUrl.value = URL.createObjectURL(blob)
-    return true
+    // 若任务尚未完成，后端可能返回 400/{"detail":"Task not completed."}
+    // 因此在前端做小范围重试以避免瞬时竞态导致的空白预览
+    const maxAttempts = 5
+    const delayMs = 1000
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const blob = await getVisualizationBlob(taskId)
+        if (vizObjectUrl.value) URL.revokeObjectURL(vizObjectUrl.value)
+        vizObjectUrl.value = URL.createObjectURL(blob)
+        return true
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        // 若为任务未完成导致的错误，则等待后重试，否则立即抛出
+        if (msg.includes('Task not completed') || msg.includes('暂时无法连接检测服务') || msg.includes('HTTP 400')) {
+          if (attempt < maxAttempts) {
+            await waitMs(delayMs)
+            continue
+          }
+          // 最后一次依然失败则当作不可用
+          return false
+        }
+        throw e
+      }
+    }
+    return false
   } catch {
     vizObjectUrl.value = null
     return false
@@ -673,10 +700,6 @@ onUnmounted(() => {
             <h1 class="brand-title">图像真伪检测</h1>
             <p class="brand-sub">检测图像是否存在后期篡改风险</p>
           </div>
-        </div>
-        <div class="topbar-meta">
-          <span class="meta-label">检测服务</span>
-          <span class="meta-value" :title="serviceDisplay">{{ serviceDisplay }}</span>
         </div>
       </div>
     </header>
@@ -1169,28 +1192,6 @@ onUnmounted(() => {
   font-size: 0.875rem;
   color: var(--text-muted);
   line-height: 1.45;
-}
-
-.topbar-meta {
-  text-align: right;
-  min-width: 0;
-}
-
-.meta-label {
-  display: block;
-  font-size: 0.7rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--text-muted);
-  margin-bottom: 0.25rem;
-}
-
-.meta-value {
-  font-size: 0.8rem;
-  color: var(--text-secondary);
-  word-break: break-all;
-  font-family: ui-monospace, monospace;
 }
 
 .main {

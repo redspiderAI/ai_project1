@@ -43,6 +43,7 @@ function buildTlAuthProxy(env: Record<string, string>): Record<string, ProxyOpti
   const common = { target, changeOrigin: true, secure } satisfies ProxyOptions
   return {
     '/tl': common,
+    '/t1': common,
     '/auth': common,
   }
 }
@@ -77,7 +78,7 @@ export default defineConfig(({ mode }) => {
   if (mode === 'development') {
     const tl = (env.VITE_TL_TARGET || env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
     const api = (env.VITE_API_TARGET || DEFAULT_API_ORIGIN).trim()
-    console.info(`[vite] 开发代理: /tl /auth → ${tl}；/api/v1 /delivery-history /forecast → ${api}`)
+    console.info(`[vite] 开发代理: /tl /t1 /auth → ${tl}；/api/v1 /delivery-history /forecast → ${api}`)
   }
   const apiProxy = {
     ...buildApiProxy(env),
