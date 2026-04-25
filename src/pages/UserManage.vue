@@ -78,6 +78,7 @@
       <div class="dialog card">
         <div class="card-body">
           <h6 class="mb-3">新增用户</h6>
+          <div v-if="createErrorText" class="alert alert-warning py-2">{{ createErrorText }}</div>
           <div class="row g-2">
             <div class="col-md-6">
               <label class="form-label">用户名</label>
@@ -202,6 +203,7 @@ const showRole = ref(false)
 const showPassword = ref(false)
 const currentUser = ref<UserRow | null>(null)
 const roleValue = ref('user')
+const createErrorText = ref('')
 
 const createForm = ref({
   username: '',
@@ -248,14 +250,16 @@ function openCreateModal() {
     phone: '',
     email: '',
   }
+  createErrorText.value = ''
   showCreate.value = true
 }
 
 async function submitCreate() {
   if (!createForm.value.username || !createForm.value.password) {
-    alert('用户名和密码必填')
+    createErrorText.value = '用户名和密码必填'
     return
   }
+  createErrorText.value = ''
   submitting.value = true
   try {
     await createUser({
@@ -269,7 +273,7 @@ async function submitCreate() {
     showCreate.value = false
     await loadUsers(1)
   } catch (e) {
-    alert(e instanceof Error ? e.message : String(e))
+    createErrorText.value = e instanceof Error ? e.message : String(e)
   } finally {
     submitting.value = false
   }

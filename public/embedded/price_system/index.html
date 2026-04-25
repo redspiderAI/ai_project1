@@ -301,6 +301,899 @@
       .quote-result-saved-collapse {
         opacity: 0.72;
       }
+      .region-missing-tip {
+        margin-top: 4px;
+        color: #dc2626;
+        font-weight: 700;
+        font-size: 12px;
+        line-height: 1.4;
+      }
     </style>
+    <script>
+      ;(() => {
+        const state = {
+          currentSmelterEditId: null,
+          currentWarehouseEditId: null,
+          smelterRegionMap: new Map(),
+          warehouseRegionMap: new Map(),
+        }
+
+        function pick(obj, keys) {
+          if (!obj || typeof obj !== 'object') return ''
+          for (const k of keys) {
+            if (obj[k] != null) return String(obj[k]).trim()
+          }
+          return ''
+        }
+
+        function splitCnAddress(address) {
+          const raw = String(address || '').trim().replace(/\s+/g, '')
+          if (!raw) return { province: '', city: '', district: '' }
+          let p = ''
+          let c = ''
+          let d = ''
+          const muni = raw.match(/^(北京市|上海市|天津市|重庆市)/)
+          if (muni) {
+            const rest = raw.slice(muni[1].length)
+            const dm = rest.match(/^(.*?(?:区|县|旗))/)
+            return { province: muni[1], city: muni[1], district: dm ? dm[1] : '' }
+          }
+          let tmp = raw
+          const pm = tmp.match(/^(.*?(?:省|自治区|特别行政区))/)
+          if (pm) {
+            p = pm[1]
+            tmp = tmp.slice(p.length)
+          }
+          const cm = tmp.match(/^(.*?(?:市|自治州|地区|盟))/)
+          if (cm) {
+            c = cm[1]
+            tmp = tmp.slice(c.length)
+          }
+          const dm = tmp.match(/^(.*?(?:区|县|旗))/)
+          if (dm) d = dm[1]
+          return { province: p, city: c, district: d }
+        }
+
+        function isRegionMissing(region) {
+          return !(region && region.province && region.city && region.district)
+        }
+
+        async function refreshRegionMaps() {
+          // 按需求关闭「库房管理/冶炼厂管理」里的自动查询接口调用
+          return
+        }
+
+        function ensureRegionInputs(prefix) {
+          if (document.getElementById(`${prefix}-province`)) return
+          const form = document.getElementById(`${prefix}-form`)
+          if (!form) return
+          const block = document.createElement('div')
+          block.innerHTML = `
+            <div class="form-group">
+              <label for="${prefix}-province">省</label>
+              <input type="text" id="${prefix}-province" class="form-control" placeholder="手动补录省（后端缺省时必填）">
+            </div>
+            <div class="form-group">
+              <label for="${prefix}-city">市</label>
+              <input type="text" id="${prefix}-city" class="form-control" placeholder="手动补录市（后端缺市时必填）">
+            </div>
+            <div class="form-group">
+              <label for="${prefix}-district">区</label>
+              <input type="text" id="${prefix}-district" class="form-control" placeholder="手动补录区/县（后端缺区时必填）">
+            </div>
+            <small class="form-text" style="color:#dc2626;">如列表标红提示缺省市区，请手动补齐后保存。</small>
+          `
+          form.appendChild(block)
+        }
+
+        function fillRegionInputs(prefix, region) {
+          const p = document.getElementById(`${prefix}-province`)
+          const c = document.getElementById(`${prefix}-city`)
+          const d = document.getElementById(`${prefix}-district`)
+          if (p) p.value = region?.province || ''
+          if (c) c.value = region?.city || ''
+          if (d) d.value = region?.district || ''
+        }
+
+        function markMissingRows() {}
+
+        async function postJson(path, body) {
+          const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(body),
+          })
+          const text = await res.text()
+          let json = null
+          try {
+            json = text ? JSON.parse(text) : null
+          } catch (_) {}
+          if (!res.ok) {
+            const msg = json && json.message ? json.message : text || `HTTP ${res.status}`
+            throw new Error(msg)
+          }
+          return json
+        }
+
+        function closeModal() {
+          const closeBtn = document.getElementById('modal-close') || document.getElementById('modal-cancel')
+          if (closeBtn) closeBtn.click()
+        }
+
+        async function handleCustomSave() {
+          const title = (document.getElementById('modal-title')?.textContent || '').trim()
+          if (!title) return false
+
+          if (title.includes('冶炼厂')) {
+            const name = (document.getElementById('smelter-name')?.value || '').trim()
+            const address = (document.getElementById('smelter-address')?.value || '').trim()
+            const parsed = splitCnAddress(address)
+            const province = (document.getElementById('smelter-province')?.value || '').trim() || parsed.province
+            const city = (document.getElementById('smelter-city')?.value || '').trim() || parsed.city
+            const district = (document.getElementById('smelter-district')?.value || '').trim() || parsed.district
+            if (!name) throw new Error('请填写冶炼厂名称')
+            if (!(province && city && district)) throw new Error('请手动补齐省/市/区')
+            const editing = title.includes('编辑') && Number.isFinite(state.currentSmelterEditId)
+            const payload = { 冶炼厂名: name, 地址: address, 省: province, 市: city, 区: district }
+            if (editing) {
+              payload['冶炼厂id'] = state.currentSmelterEditId
+              payload['is_active'] = true
+            }
+            await postJson(editing ? '/tl/update_smelter' : '/tl/add_smelter', payload)
+            closeModal()
+            markMissingRows()
+            setTimeout(() => window.location.reload(), 120)
+            return true
+          }
+
+          if (title.includes('库房')) {
+            const name = (document.getElementById('warehouse-name')?.value || '').trim()
+            const address = (document.getElementById('warehouse-address')?.value || '').trim()
+            const parsed = splitCnAddress(address)
+            const province = (document.getElementById('warehouse-province')?.value || '').trim() || parsed.province
+            const city = (document.getElementById('warehouse-city')?.value || '').trim() || parsed.city
+            const district = (document.getElementById('warehouse-district')?.value || '').trim() || parsed.district
+            const typeSel = document.getElementById('warehouse-type-select')
+            const typeId = Number(typeSel?.value || '')
+            const typeName = (typeSel?.selectedOptions?.[0]?.textContent || '')
+              .replace(/^\[停用\]\s*/, '')
+              .trim()
+            if (!name) throw new Error('请填写库房名称')
+            if (!address) throw new Error('请填写库房地址')
+            if (!(province && city && district)) throw new Error('请手动补齐省/市/区')
+            if (!Number.isFinite(typeId) || typeId <= 0) throw new Error('请先选择库房类型')
+            const editing = title.includes('编辑') && Number.isFinite(state.currentWarehouseEditId)
+            const payload = {
+              仓库名: name,
+              地址: address,
+              仓库类型id: typeId,
+              库房类型名: typeName,
+              省: province,
+              市: city,
+              区: district,
+            }
+            if (editing) {
+              payload['仓库id'] = state.currentWarehouseEditId
+              payload['is_active'] = true
+            }
+            await postJson(editing ? '/tl/update_warehouse' : '/tl/add_warehouse', payload)
+            closeModal()
+            markMissingRows()
+            setTimeout(() => window.location.reload(), 120)
+            return true
+          }
+
+          return false
+        }
+
+        document.addEventListener(
+          'click',
+          (evt) => {
+            const smEdit = evt.target.closest('#smelter-table-body .edit-btn')
+            if (smEdit) {
+              const id = Number(smEdit.getAttribute('data-id'))
+              state.currentSmelterEditId = Number.isFinite(id) ? id : null
+            }
+            const whEdit = evt.target.closest('#warehouse-table-body .edit-btn')
+            if (whEdit) {
+              const id = Number(whEdit.getAttribute('data-id'))
+              state.currentWarehouseEditId = Number.isFinite(id) ? id : null
+            }
+          },
+          true,
+        )
+
+        document.addEventListener(
+          'click',
+          async (evt) => {
+            const btn = evt.target.closest('#modal-confirm')
+            if (!btn) return
+            const title = (document.getElementById('modal-title')?.textContent || '').trim()
+            if (!/冶炼厂|库房/.test(title)) return
+            evt.preventDefault()
+            evt.stopImmediatePropagation()
+            try {
+              btn.disabled = true
+              const old = btn.textContent
+              btn.textContent = '处理中...'
+              await handleCustomSave()
+              btn.textContent = old || '确认'
+              btn.disabled = false
+            } catch (err) {
+              btn.disabled = false
+              btn.textContent = '确认'
+              alert(err instanceof Error ? err.message : String(err))
+            }
+          },
+          true,
+        )
+
+        const mo = new MutationObserver(async () => {
+          const title = (document.getElementById('modal-title')?.textContent || '').trim()
+          if (title.includes('冶炼厂')) {
+            ensureRegionInputs('smelter')
+            const region = state.smelterRegionMap.get(state.currentSmelterEditId) || null
+            fillRegionInputs('smelter', region)
+          }
+          if (title.includes('库房')) {
+            ensureRegionInputs('warehouse')
+            const region = state.warehouseRegionMap.get(state.currentWarehouseEditId) || null
+            fillRegionInputs('warehouse', region)
+          }
+          markMissingRows()
+        })
+
+        function start() {
+          mo.observe(document.body, { childList: true, subtree: true })
+          markMissingRows()
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', start)
+        } else {
+          start()
+        }
+      })()
+    </script>
+    <style>
+      .abnormal-data-page .summary-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      .abnormal-data-page .summary-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 10px 12px;
+        background: #fff;
+      }
+      .abnormal-data-page .summary-card .label {
+        font-size: 12px;
+        color: #64748b;
+      }
+      .abnormal-data-page .summary-card .value {
+        margin-top: 4px;
+        font-size: 22px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      #abnormal-edit-overlay .abnormal-pcd-input[readonly] {
+        background: #f1f5f9;
+        cursor: not-allowed;
+      }
+      .home-page .module-card.module-card--abnormal {
+        border: 1px solid #f87171;
+        background: linear-gradient(180deg, #fff5f5 0%, #fff 100%);
+        box-shadow: 0 0 0 1px rgba(220, 38, 38, 0.1);
+      }
+      .home-page .module-card.module-card--abnormal .module-icon {
+        background: #fee2e2;
+        color: #dc2626;
+      }
+      .home-page .module-card.module-card--abnormal .module-info h4 {
+        color: #b91c1c;
+        margin: 0 0 4px 0;
+      }
+      .home-page .module-card.module-card--abnormal .module-info p {
+        color: #7f1d1d;
+        opacity: 0.9;
+        margin: 0;
+      }
+    </style>
+    <script>
+      ;(() => {
+        const PAGE_KEY = 'abnormal-data'
+        const TEMPLATE_ID = `${PAGE_KEY}-template`
+
+        function ensureTemplate() {
+          if (document.getElementById(TEMPLATE_ID)) return
+          const tpl = document.createElement('template')
+          tpl.id = TEMPLATE_ID
+          tpl.innerHTML = `
+            <div class="page-content abnormal-data-page">
+              <div class="page-header">
+                <h3>异常数据</h3>
+                <p>补全「省/市/区」；经纬度缺失不在此处理。不展示「默认仓库」「默认冶炼厂」。</p>
+              </div>
+              <div class="card">
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:12px;">
+                  <h4 style="margin:0;">省市区待补全</h4>
+                  <button id="abnormal-refresh-btn" class="btn btn-outline-primary btn-sm">刷新</button>
+                </div>
+                <div class="card-body">
+                  <div class="summary-cards">
+                    <div class="summary-card"><div class="label">仓库待补全</div><div class="value" id="abnormal-wh-count">-</div></div>
+                    <div class="summary-card"><div class="label">冶炼厂待补全</div><div class="value" id="abnormal-sm-count">-</div></div>
+                    <div class="summary-card"><div class="label">合计</div><div class="value" id="abnormal-total-count">-</div></div>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="data-table">
+                      <thead><tr><th colspan="6">仓库（省/市/区未齐）</th></tr></thead>
+                      <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>省/市/区</th><th>类型</th><th>操作</th></tr></thead>
+                      <tbody id="abnormal-warehouse-tbody"><tr><td colspan="6">加载中...</td></tr></tbody>
+                    </table>
+                  </div>
+                  <div class="table-responsive" style="margin-top:12px;">
+                    <table class="data-table">
+                      <thead><tr><th colspan="5">冶炼厂（省/市/区未齐）</th></tr></thead>
+                      <thead><tr><th>ID</th><th>名称</th><th>地址</th><th>省/市/区</th><th>操作</th></tr></thead>
+                      <tbody id="abnormal-smelter-tbody"><tr><td colspan="5">加载中...</td></tr></tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          `
+          document.body.appendChild(tpl)
+          if (!document.getElementById('abnormal-edit-overlay')) {
+            const ov = document.createElement('div')
+            ov.id = 'abnormal-edit-overlay'
+            ov.className = 'modal-overlay'
+            ov.style.cssText =
+              'display:none;align-items:center;justify-content:center;padding:20px;position:fixed;inset:0;background:rgba(15,23,42,0.45);z-index:10050;'
+            ov.innerHTML = `
+              <div class="card" style="max-width:420px;width:100%;position:relative;box-shadow:0 8px 32px rgba(0,0,0,0.15);">
+                <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+                  <h4 id="abnormal-edit-title" style="margin:0;">补全省市区</h4>
+                  <button type="button" class="btn btn-sm" id="abnormal-edit-close" aria-label="关闭">×</button>
+                </div>
+                <div class="card-body">
+                  <p id="abnormal-edit-meta" class="text-muted" style="font-size:13px;margin-bottom:10px;"></p>
+                  <div class="form-group">
+                    <label for="abnormal-in-prov">省</label>
+                    <input type="text" id="abnormal-in-prov" class="form-control abnormal-pcd-input" placeholder="省" autocomplete="address-level1">
+                  </div>
+                  <div class="form-group">
+                    <label for="abnormal-in-city">市</label>
+                    <input type="text" id="abnormal-in-city" class="form-control abnormal-pcd-input" placeholder="市" autocomplete="address-level2">
+                  </div>
+                  <div class="form-group">
+                    <label for="abnormal-in-dist">区/县</label>
+                    <input type="text" id="abnormal-in-dist" class="form-control abnormal-pcd-input" placeholder="区/县" autocomplete="address-level3">
+                  </div>
+                  <p class="text-muted" style="font-size:12px;">已有项已填好且不可改；只需补全空项。经纬度不在此处理。</p>
+                  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+                    <button type="button" class="btn" id="abnormal-edit-cancel">取消</button>
+                    <button type="button" class="btn btn-primary" id="abnormal-edit-save">保存</button>
+                  </div>
+                </div>
+              </div>
+            `
+            document.body.appendChild(ov)
+          }
+        }
+
+        const abnormalWhCache = new Map()
+        const abnormalSmCache = new Map()
+        let abnormalEdit = { kind: null, idKey: null }
+        let abnormalModalBound = false
+
+        function pick(obj, keys) {
+          if (!obj || typeof obj !== 'object') return ''
+          for (const k of keys) {
+            if (obj[k] != null) return String(obj[k]).trim()
+          }
+          return ''
+        }
+
+        function pickNum(obj, keys) {
+          const v = pick(obj, keys)
+          const n = Number(v)
+          return Number.isFinite(n) && n > 0 ? n : 0
+        }
+
+        function esc(s) {
+          return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+        }
+
+        function getPcd(row) {
+          return {
+            prov: pick(row, ['省', '省份', 'province']),
+            city: pick(row, ['市', '城市', 'city']),
+            dist: pick(row, ['区', '区县', 'district', '县']),
+          }
+        }
+
+        function isPcdIncomplete(p) {
+          return !(p.prov && p.city && p.dist)
+        }
+
+        function isDefaultWarehouseName(name) {
+          const n = String(name || '').trim()
+          return n === '默认仓库' || n.includes('默认仓库')
+        }
+
+        function isDefaultSmelterName(name) {
+          const n = String(name || '').trim()
+          return n === '默认冶炼厂' || n.includes('默认冶炼厂')
+        }
+
+        function filterAbnormalPcdRows(warehouses, smelters) {
+          const whRows = (warehouses || []).filter((row) => {
+            const name = pick(row, ['仓库名', '仓库', 'warehouse_name', 'name'])
+            if (isDefaultWarehouseName(name)) return false
+            return isPcdIncomplete(getPcd(row))
+          })
+          const smRows = (smelters || []).filter((row) => {
+            const name = pick(row, ['冶炼厂', '冶炼厂名', 'factory_name', 'name'])
+            if (isDefaultSmelterName(name)) return false
+            return isPcdIncomplete(getPcd(row))
+          })
+          return { whRows, smRows }
+        }
+
+        /** 常见形态：{ data: { warehouses, smelters, summary } } 或 { result: {...} } 或根级平铺 */
+        function pickMissingGeoDataPayload(json) {
+          if (!json || typeof json !== 'object') return null
+          if (json.data && typeof json.data === 'object' && !Array.isArray(json.data)) return json.data
+          if (json.result && typeof json.result === 'object' && !Array.isArray(json.result)) return json.result
+          return json
+        }
+
+        function parseGetMissingGeoJson(json) {
+          if (!json || typeof json !== 'object') {
+            return { warehouses: [], smelters: [], summary: null }
+          }
+          const inner = pickMissingGeoDataPayload(json) || {}
+          const root = json
+          const warehouses = Array.isArray(inner.warehouses)
+            ? inner.warehouses
+            : Array.isArray(root.warehouses)
+              ? root.warehouses
+              : []
+          const smelters = Array.isArray(inner.smelters)
+            ? inner.smelters
+            : Array.isArray(root.smelters)
+              ? root.smelters
+              : []
+          let summary = null
+          if (inner.summary && typeof inner.summary === 'object') {
+            summary = inner.summary
+          } else if (root.summary && typeof root.summary === 'object') {
+            summary = root.summary
+          }
+          return { warehouses, smelters, summary }
+        }
+
+        function summaryNum(s, key) {
+          if (!s || s[key] == null || s[key] === '') return null
+          const n = Number(s[key])
+          return Number.isFinite(n) ? n : null
+        }
+
+        /** 详情页三张卡：有 summary 字段就用接口数字，可只填其中部分 */
+        function applyMissingGeoSummaryToCards(summary, whCount, smCount, totalCount, whRows, smRows) {
+          const w = summaryNum(summary, 'warehouses')
+          const s = summaryNum(summary, 'smelters')
+          const t = summaryNum(summary, 'total')
+          if (w != null && whCount) whCount.textContent = String(w)
+          else if (whCount) whCount.textContent = String(whRows.length)
+          if (s != null && smCount) smCount.textContent = String(s)
+          else if (smCount) smCount.textContent = String(smRows.length)
+          if (t != null && totalCount) totalCount.textContent = String(t)
+          else if (totalCount) totalCount.textContent = String(whRows.length + smRows.length)
+        }
+
+        function pcdLine(p) {
+          return [p.prov || '—', p.city || '—', p.dist || '—'].join(' / ')
+        }
+
+        async function postAbnormalJson(path, body) {
+          const res = await fetch(path, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(body),
+          })
+          const text = await res.text()
+          let json = null
+          try {
+            json = text ? JSON.parse(text) : null
+          } catch (_) {}
+          if (!res.ok) {
+            const msg = json && json.message ? json.message : text || `HTTP ${res.status}`
+            throw new Error(msg)
+          }
+          return json
+        }
+
+        async function unwrapWarehouseListFromResponse(res) {
+          const j = await res.json()
+          const d = j && j.data
+          if (Array.isArray(d)) return d
+          if (d && Array.isArray(d.warehouses)) return d.warehouses
+          if (d && Array.isArray(d.list)) return d.list
+          if (j && Array.isArray(j.list)) return j.list
+          if (Array.isArray(j)) return j
+          return []
+        }
+
+        async function unwrapSmelterListFromResponse(res) {
+          const j = await res.json()
+          const d = j && j.data
+          if (Array.isArray(d)) return d
+          if (d && Array.isArray(d.smelters)) return d.smelters
+          if (d && Array.isArray(d.list)) return d.list
+          if (j && Array.isArray(j.list)) return j.list
+          if (Array.isArray(j)) return j
+          return []
+        }
+
+        function copyNumberIfPresent(payload, full, toKey, fromKeys) {
+          if (full == null) return
+          for (const k of fromKeys) {
+            if (!(k in full) || full[k] === null || full[k] === '') continue
+            const n = Number(full[k])
+            if (Number.isFinite(n)) {
+              payload[toKey] = n
+              return
+            }
+          }
+        }
+
+        function copyOptionalStringFieldsFromFull(payload, full, keys) {
+          for (const k of keys) {
+            if (full == null) continue
+            if (!(k in full)) continue
+            const v = full[k]
+            if (v == null) continue
+            if (typeof v === 'string' && v.trim() === '') continue
+            payload[k] = v
+          }
+        }
+
+        /** 仅用户可改 省/市/区，其余从完整记录带过去（有则带、无则不带）；经纬度只透传。 */
+        function buildWarehouseUpdatePayload(full, prov, city, dist) {
+          const wid = pickNum(full, ['仓库id', 'id', 'warehouse_id'])
+          if (!wid) throw new Error('记录缺少 仓库id')
+          const typeId = pickNum(full, ['仓库类型id', '类型id', 'warehouse_type_id', 'type_id'])
+          const typeName = pick(full, ['类型', '库房类型名', '类型名', 'type_name', '仓库类型名'])
+          const payload = {
+            仓库id: wid,
+            仓库名: pick(full, ['仓库名', '仓库', 'warehouse_name', 'name']) || '',
+            地址: pick(full, ['地址', 'address', '详细地址']) || '',
+            省: prov,
+            市: city,
+            区: dist,
+          }
+          if (typeId) payload['仓库类型id'] = typeId
+          if (typeName) {
+            payload['类型'] = typeName
+            payload['库房类型名'] = typeName
+          }
+          copyNumberIfPresent(payload, full, '经度', ['经度', 'lon', 'longitude', 'lng'])
+          copyNumberIfPresent(payload, full, '纬度', ['纬度', 'lat', 'latitude'])
+          copyOptionalStringFieldsFromFull(payload, full, [
+            '库房类型颜色配置',
+            '仓库颜色配置',
+            '颜色配置',
+          ])
+          if (typeof full['is_active'] === 'boolean') {
+            payload['is_active'] = full['is_active']
+          } else {
+            payload['is_active'] = true
+          }
+          return payload
+        }
+
+        function buildSmelterUpdatePayload(full, prov, city, dist) {
+          const sid = pickNum(full, ['冶炼厂id', 'id', 'factory_id'])
+          if (!sid) throw new Error('记录缺少 冶炼厂id')
+          const payload = {
+            冶炼厂id: sid,
+            冶炼厂名: pick(full, ['冶炼厂', '冶炼厂名', 'factory_name', 'name']) || '',
+            地址: pick(full, ['地址', 'address', '详细地址']) || '',
+            省: prov,
+            市: city,
+            区: dist,
+          }
+          copyNumberIfPresent(payload, full, '经度', ['经度', 'lon', 'longitude', 'lng'])
+          copyNumberIfPresent(payload, full, '纬度', ['纬度', 'lat', 'latitude'])
+          if (typeof full['is_active'] === 'boolean') {
+            payload['is_active'] = full['is_active']
+          } else {
+            payload['is_active'] = true
+          }
+          return payload
+        }
+
+        async function fetchFullWarehouseById(wid) {
+          const r = await fetch('/tl/get_warehouses?include_inactive=true', { credentials: 'same-origin' })
+          if (!r.ok) return null
+          const list = await unwrapWarehouseListFromResponse(r)
+          return list.find((w) => pickNum(w, ['仓库id', 'id', 'warehouse_id']) === wid) || null
+        }
+
+        async function fetchFullSmelterById(sid) {
+          for (const path of ['/tl/get_smelters?include_inactive=true', '/tl/get_smelters']) {
+            const r = await fetch(path, { credentials: 'same-origin' })
+            if (!r.ok) continue
+            const list = await unwrapSmelterListFromResponse(r)
+            const f = list.find((s) => pickNum(s, ['冶炼厂id', 'id', 'factory_id']) === sid) || null
+            if (f) return f
+          }
+          return null
+        }
+
+        function closeAbnormalEdit() {
+          const ov = document.getElementById('abnormal-edit-overlay')
+          if (ov) ov.style.display = 'none'
+          abnormalEdit = { kind: null, idKey: null }
+        }
+
+        function openAbnormalEdit(kind, idKey) {
+          const row = kind === 'wh' ? abnormalWhCache.get(idKey) : abnormalSmCache.get(idKey)
+          if (!row) return
+          abnormalEdit = { kind, idKey }
+          const pcd = getPcd(row)
+          const id =
+            kind === 'wh'
+              ? pick(row, ['仓库id', 'id', 'warehouse_id'])
+              : pick(row, ['冶炼厂id', 'id', 'factory_id'])
+          const name =
+            kind === 'wh'
+              ? pick(row, ['仓库名', '仓库', 'warehouse_name', 'name'])
+              : pick(row, ['冶炼厂', '冶炼厂名', 'factory_name', 'name'])
+          const title = document.getElementById('abnormal-edit-title')
+          const meta = document.getElementById('abnormal-edit-meta')
+          if (title) title.textContent = kind === 'wh' ? '补全库房省市区' : '补全冶炼厂省市区'
+          if (meta) meta.textContent = `ID: ${id} ｜ ${name || ''}`
+
+          const setField = (idEl, val) => {
+            const el = document.getElementById(idEl)
+            if (!el) return
+            const v = (val || '').trim()
+            el.value = v
+            if (v) {
+              el.setAttribute('readonly', 'readonly')
+            } else {
+              el.removeAttribute('readonly')
+            }
+          }
+          setField('abnormal-in-prov', pcd.prov)
+          setField('abnormal-in-city', pcd.city)
+          setField('abnormal-in-dist', pcd.dist)
+          const ov = document.getElementById('abnormal-edit-overlay')
+          if (ov) ov.style.display = 'flex'
+        }
+
+        async function saveAbnormalEdit() {
+          const { kind, idKey } = abnormalEdit
+          if (!kind || !idKey) return
+          const row = kind === 'wh' ? abnormalWhCache.get(idKey) : abnormalSmCache.get(idKey)
+          if (!row) {
+            closeAbnormalEdit()
+            return
+          }
+          const pcd = getPcd(row)
+          const inP = document.getElementById('abnormal-in-prov')
+          const inC = document.getElementById('abnormal-in-city')
+          const inD = document.getElementById('abnormal-in-dist')
+          const read = (el, orig) => {
+            if (el && el.hasAttribute('readonly')) return (orig || '').trim() || (el.value || '').trim()
+            return (el && el.value ? el.value : '').trim() || (orig || '').trim()
+          }
+          const prov = read(inP, pcd.prov)
+          const city = read(inC, pcd.city)
+          const dist = read(inD, pcd.dist)
+          if (!(prov && city && dist)) {
+            alert('请补全缺失的省、市、区/县')
+            return
+          }
+          const saveBtn = document.getElementById('abnormal-edit-save')
+          const oldText = saveBtn && saveBtn.textContent
+          if (saveBtn) {
+            saveBtn.disabled = true
+            saveBtn.textContent = '保存中...'
+          }
+          try {
+            if (kind === 'wh') {
+              const wid = pickNum(row, ['仓库id', 'id', 'warehouse_id'])
+              if (!wid) throw new Error('缺少仓库 ID')
+              const fetched = await fetchFullWarehouseById(wid)
+              const full = fetched ? Object.assign({}, row, fetched) : row
+              if (!pickNum(full, ['仓库类型id', '类型id', 'warehouse_type_id', 'type_id'])) {
+                throw new Error('记录缺少库房类型，请先在库房管理中维护该库房')
+              }
+              const payload = buildWarehouseUpdatePayload(full, prov, city, dist)
+              await postAbnormalJson('/tl/update_warehouse', payload)
+            } else {
+              const sid = pickNum(row, ['冶炼厂id', 'id', 'factory_id'])
+              if (!sid) throw new Error('缺少冶炼厂 ID')
+              const fetched = await fetchFullSmelterById(sid)
+              const full = fetched ? Object.assign({}, row, fetched) : row
+              const payload = buildSmelterUpdatePayload(full, prov, city, dist)
+              await postAbnormalJson('/tl/update_smelter', payload)
+            }
+            closeAbnormalEdit()
+            await loadAbnormalData()
+          } catch (e) {
+            alert(e instanceof Error ? e.message : String(e))
+          } finally {
+            if (saveBtn) {
+              saveBtn.disabled = false
+              saveBtn.textContent = oldText || '保存'
+            }
+          }
+        }
+
+        function bindAbnormalModalOnce() {
+          if (abnormalModalBound) return
+          const ov = document.getElementById('abnormal-edit-overlay')
+          if (!ov) return
+          abnormalModalBound = true
+          document.getElementById('abnormal-edit-close')?.addEventListener('click', closeAbnormalEdit)
+          document.getElementById('abnormal-edit-cancel')?.addEventListener('click', closeAbnormalEdit)
+          document.getElementById('abnormal-edit-save')?.addEventListener('click', () => {
+            void saveAbnormalEdit()
+          })
+          ov.addEventListener('click', (e) => {
+            if (e.target === ov) closeAbnormalEdit()
+          })
+          document.addEventListener('click', (e) => {
+            const b = e.target && e.target.closest && e.target.closest('.abnormal-edit-btn')
+            if (!b) return
+            e.preventDefault()
+            const k = b.getAttribute('data-kind') || ''
+            const idk = b.getAttribute('data-id') || ''
+            if (!idk) return
+            if (k === 'wh' || k === 'sm') openAbnormalEdit(k, idk)
+          })
+        }
+
+        async function loadAbnormalData() {
+          const whBody = document.getElementById('abnormal-warehouse-tbody')
+          const smBody = document.getElementById('abnormal-smelter-tbody')
+          const whCount = document.getElementById('abnormal-wh-count')
+          const smCount = document.getElementById('abnormal-sm-count')
+          const totalCount = document.getElementById('abnormal-total-count')
+          if (!whBody || !smBody) return
+          whBody.innerHTML = '<tr><td colspan="6">加载中...</td></tr>'
+          smBody.innerHTML = '<tr><td colspan="5">加载中...</td></tr>'
+          bindAbnormalModalOnce()
+          try {
+            const res = await fetch('/tl/get_missing_geo_info?include_inactive=false', {
+              credentials: 'same-origin',
+            })
+            if (!res.ok) throw new Error(`HTTP ${res.status}`)
+            const text = await res.text()
+            let json = null
+            try {
+              json = text ? JSON.parse(text) : null
+            } catch (e) {
+              throw new Error('响应非 JSON')
+            }
+            const { warehouses, smelters, summary } = parseGetMissingGeoJson(json)
+
+            abnormalWhCache.clear()
+            abnormalSmCache.clear()
+
+            const { whRows, smRows } = filterAbnormalPcdRows(warehouses, smelters)
+            applyMissingGeoSummaryToCards(summary, whCount, smCount, totalCount, whRows, smRows)
+
+            whBody.innerHTML = whRows.length
+              ? whRows
+                  .map((row) => {
+                    const id = pickNum(row, ['仓库id', 'id', 'warehouse_id'])
+                    const idKey = id ? String(id) : ''
+                    if (idKey) abnormalWhCache.set(idKey, row)
+                    const name = pick(row, ['仓库名', '仓库', 'warehouse_name', 'name']) || '-'
+                    const addr = pick(row, ['地址', 'address', '详细地址']) || '-'
+                    const type = pick(row, ['类型', '库房类型名', '仓库类型名', 'type_name']) || '-'
+                    const line = pcdLine(getPcd(row))
+                    const btn = idKey
+                      ? `<button type="button" class="btn btn-sm btn-primary abnormal-edit-btn" data-kind="wh" data-id="${esc(
+                          idKey,
+                        )}">更改</button>`
+                      : '—'
+                    return `<tr><td>${esc(id || '—')}</td><td>${esc(name)}</td><td>${esc(addr)}</td><td>${esc(
+                      line,
+                    )}</td><td>${esc(type)}</td><td>${btn}</td></tr>`
+                  })
+                  .join('')
+              : '<tr><td colspan="6">暂无省市区待补全的仓库</td></tr>'
+
+            smBody.innerHTML = smRows.length
+              ? smRows
+                  .map((row) => {
+                    const id = pickNum(row, ['冶炼厂id', 'id', 'factory_id'])
+                    const idKey = id ? String(id) : ''
+                    if (idKey) abnormalSmCache.set(idKey, row)
+                    const name = pick(row, ['冶炼厂', '冶炼厂名', 'factory_name', 'name']) || '-'
+                    const addr = pick(row, ['地址', 'address', '详细地址']) || '-'
+                    const line = pcdLine(getPcd(row))
+                    const btn = idKey
+                      ? `<button type="button" class="btn btn-sm btn-primary abnormal-edit-btn" data-kind="sm" data-id="${esc(
+                          idKey,
+                        )}">更改</button>`
+                      : '—'
+                    return `<tr><td>${esc(id || '—')}</td><td>${esc(name)}</td><td>${esc(addr)}</td><td>${esc(
+                      line,
+                    )}</td><td>${btn}</td></tr>`
+                  })
+                  .join('')
+              : '<tr><td colspan="5">暂无省市区待补全的冶炼厂</td></tr>'
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            whBody.innerHTML = `<tr><td colspan="6">加载失败：${esc(msg)}</td></tr>`
+            smBody.innerHTML = `<tr><td colspan="5">加载失败：${esc(msg)}</td></tr>`
+          }
+        }
+
+        function ensureModuleCard() {
+          const cards = Array.from(document.querySelectorAll('.home-page .module-cards'))
+          if (!cards.length) return
+          const backendCards = cards[0]
+          if (!backendCards || backendCards.querySelector(`.module-card[data-page="${PAGE_KEY}"]`)) return
+          const card = document.createElement('div')
+          card.className = 'module-card module-card--abnormal'
+          card.setAttribute('data-page', PAGE_KEY)
+          card.innerHTML = `
+            <div class="module-icon"><i class="fas fa-triangle-exclamation"></i></div>
+            <div class="module-info">
+              <h4>异常数据</h4>
+              <p>补全仓库/冶炼厂省、市、区</p>
+            </div>
+          `
+          backendCards.appendChild(card)
+        }
+
+        function bindPageLifecycle() {
+          document.addEventListener('click', (evt) => {
+            const card = evt.target.closest(`.module-card[data-page="${PAGE_KEY}"]`)
+            if (!card) return
+            setTimeout(() => {
+              loadAbnormalData()
+              const btn = document.getElementById('abnormal-refresh-btn')
+              if (btn && !btn.dataset.bound) {
+                btn.dataset.bound = '1'
+                btn.addEventListener('click', () => loadAbnormalData())
+              }
+            }, 0)
+          })
+        }
+
+        function start() {
+          ensureTemplate()
+          bindAbnormalModalOnce()
+          bindPageLifecycle()
+          const mo = new MutationObserver(() => ensureModuleCard())
+          mo.observe(document.body, { childList: true, subtree: true })
+          ensureModuleCard()
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', start)
+        } else {
+          start()
+        }
+      })()
+    </script>
 </body>
 </html>

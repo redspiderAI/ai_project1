@@ -17,6 +17,11 @@ type ApiResp<T> = {
   data?: T
 }
 
+type FastApiValidationItem = {
+  loc?: unknown
+  msg?: unknown
+}
+
 const TOKEN_KEY = 'api_token'
 
 function readMsg(data: unknown): string {
@@ -24,6 +29,20 @@ function readMsg(data: unknown): string {
   const o = data as Record<string, unknown>
   if (typeof o.message === 'string') return o.message
   if (typeof o.detail === 'string') return o.detail
+  if (Array.isArray(o.detail)) {
+    const lines = (o.detail as FastApiValidationItem[])
+      .map((it) => {
+        const msg = typeof it?.msg === 'string' ? it.msg : ''
+        const loc =
+          Array.isArray(it?.loc) && it.loc.length
+            ? String(it.loc[it.loc.length - 1] ?? '')
+            : ''
+        if (!msg) return ''
+        return loc ? `${loc}：${msg}` : msg
+      })
+      .filter((x) => x !== '')
+    if (lines.length) return lines.join('；')
+  }
   return ''
 }
 
@@ -89,10 +108,15 @@ export async function fetchUsers(params: {
   if (!res.ok) throw new Error(readMsg(data) || `获取用户列表失败（HTTP ${res.status}）`)
 
   const payload = (data || {}) as ApiResp<{ items?: UserRow[]; total?: number }>
-  const inner = payload.data || {}
+  const inner = (payload.data || {}) as Record<string, unknown>
+  const list =
+    (Array.isArray(inner.items) ? inner.items : null) ||
+    (Array.isArray(inner.list) ? inner.list : null) ||
+    (Array.isArray(inner.records) ? inner.records : null) ||
+    []
   return {
-    items: Array.isArray(inner.items) ? inner.items : [],
-    total: typeof inner.total === 'number' ? inner.total : 0,
+    items: list as UserRow[],
+    total: typeof inner.total === 'number' ? inner.total : list.length,
   }
 }
 
