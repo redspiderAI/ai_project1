@@ -72,12 +72,20 @@ function useMockOnly(): boolean {
   return String(import.meta.env.VITE_USE_MOCK ?? '').trim() === '1'
 }
 
+function isGatewayLikeStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504
+}
+
 function nowIso(): string {
   return new Date().toISOString()
 }
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
+function randomRange(min: number, max: number): number {
+  return min + Math.random() * (max - min)
 }
 
 async function waitMs(ms: number, signal?: AbortSignal): Promise<void> {
@@ -897,9 +905,8 @@ function coerceHistoryCreatedAt(raw: Record<string, unknown>): string {
 }
 
 function coerceApiRecord(raw: Record<string, unknown>): DetectionHistoryApiRecord | null {
-  const rawId = raw.id
-  if (rawId === undefined || rawId === null) return null
-  const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : String(rawId)
+  const id = raw.id
+  if (id === undefined || id === null) return null
   const created = coerceHistoryCreatedAt(raw) || '—'
   const st = typeof raw.status === 'string' ? raw.status : 'COMPLETED'
   const mode = typeof raw.mode === 'string' ? raw.mode : 'unknown'
