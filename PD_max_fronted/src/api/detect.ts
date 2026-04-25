@@ -6,15 +6,13 @@ export type BboxXYWH = readonly [number, number, number, number]
 
 import { demoLabelForFileName } from './mockDemoFileLabels'
 
-/** 开发时未配置 VITE_API_BASE 时的直连地址（与 .env 中可一致） */
-const DEFAULT_DEV_API_BASE = 'http://111.229.25.160:8002'
 const AI_DETECTION_PREFIX = '/ai-detection'
 
 function baseUrl(): string {
   const raw = import.meta.env.VITE_API_BASE
   const trimmed = typeof raw === 'string' ? raw.trim() : ''
   const proxyTarget = String(import.meta.env.VITE_PROXY_TARGET ?? '').trim()
-  // 生产构建默认与页面同源（/project3/ 与 /ai-detection/ 同 host:80，经 Nginx 反代），避免 :8002 跨域
+  // 生产：默认同源（/ai-detection 经 Nginx 反代），与 `src/api/config.ts` 的门户 /api 一致
   if (import.meta.env.PROD) {
     return trimmed !== '' ? trimmed.replace(/\/$/, '') : ''
   }
@@ -24,7 +22,8 @@ function baseUrl(): string {
   if (proxyTarget !== '') {
     return ''
   }
-  return DEFAULT_DEV_API_BASE.replace(/\/$/, '')
+  // 开发：默认同源相对路径 /ai-detection，由主项目 Vite 代理到与电子地图相同的 VITE_API_TARGET（勿写死旧 IP:8002）
+  return ''
 }
 
 function apiUrl(path: string): string {
@@ -33,13 +32,30 @@ function apiUrl(path: string): string {
 
 function aiDetectionUrl(path: string): string {
   const normalized = path.startsWith('/') ? path : `/${path}`
-  return apiUrl(`${AI_DETECTION_PREFIX}${normalized}`)
+  return `${AI_DETECTION_PREFIX}${normalized}`
 }
 
 export function resolveApiUrl(path: string): string {
   if (!path) return ''
   if (/^https?:\/\//i.test(path)) return path
-  return apiUrl(path.startsWith('/') ? path : `/${path}`)
+  const p = path.startsWith('/') ? path : `/${path}`
+  const b = baseUrl()
+  if (!b) return p
+
+  const versionPrefix = '/api/v1'
+  // 情形 A: base 以 /api/v1 结尾，且 path 也以 /api/v1 开头 → 去重拼接
+  if (b.endsWith(versionPrefix) && p.startsWith(versionPrefix)) {
+    return `${b}${p.slice(versionPrefix.length)}`
+  }
+  // 情形 B: base 以 /api/v1 结尾，但请求 path 是其他 /api/vX（如 /api/v3）
+  // 在某些部署（Nginx 把 /api/v1 反代到后端）下，应从域名根拼接目标版本路径，避免 /api/v1/api/v3
+  if (b.endsWith(versionPrefix) && /^\/api\/v\d+/i.test(p)) {
+    const baseRoot = b.replace(new RegExp(`${versionPrefix}$`), '')
+    return `${baseRoot}${p}`
+  }
+
+  // 默认：直接在 baseUrl 下拼接
+  return apiUrl(p)
 }
 
 /** 将代理/网关类错误转成可操作的说明（开发环境 502 多为后端未启动或端口不对） */
@@ -51,7 +67,7 @@ function httpFailMessage(status: number, rawBody: string): string {
   if (status === 502 || status === 503 || status === 504) {
     const hint =
       import.meta.env.DEV && !import.meta.env.VITE_API_BASE
-        ? '开发代理未指向可用服务：可在项目根目录 .env 中设置 VITE_API_BASE 为检测服务地址，或调整 VITE_PROXY_TARGET。'
+        ? '开发代理未指向可用服务：可在主项目 .env 中检查 VITE_API_TARGET（/ai-detection 与其一致），或单独设置 VITE_API_BASE；PD_max_fronted 独立开发时可设 VITE_PROXY_TARGET。'
         : '检测服务暂时不可用或网络异常，请稍后重试；若多次失败请联系管理员确认服务是否在线。'
     return detail
       ? `${detail}\n\n${hint}`
@@ -72,12 +88,20 @@ function useMockOnly(): boolean {
   return String(import.meta.env.VITE_USE_MOCK ?? '').trim() === '1'
 }
 
+function isGatewayLikeStatus(status: number): boolean {
+  return status === 502 || status === 503 || status === 504
+}
+
 function nowIso(): string {
   return new Date().toISOString()
 }
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
+}
+
+function randomRange(min: number, max: number): number {
+  return min + Math.random() * (max - min)
 }
 
 async function waitMs(ms: number, signal?: AbortSignal): Promise<void> {
@@ -819,24 +843,37 @@ export async function getV3Result(
 }
 
 export async function getVisualizationBlob(taskId: string): Promise<Blob> {
-  const res = await fetch(aiDetectionUrl(`/api/v3/result/${encodeURIComponent(taskId)}/visualization`))
-  if (!res.ok) {
-    const t = await res.text()
+  const enc = encodeURIComponent(taskId)
+  const tryPaths = [
+    // 优先尝试带 /ai-detection 前缀的路径（适配 Nginx 将 /ai-detection 直连后端的部署）
+    aiDetectionUrl(`/api/v3/result/${enc}/visualization`),
+    // 回退到网关/代理路径（如 /api/v3 或 /api/v1 根下的 /api/v3）
+    resolveApiUrl(`/api/v3/result/${enc}/visualization`),
+  ]
+
+  let lastText = ''
+  for (const url of tryPaths) {
+    const res = await fetch(url)
+    if (res.ok) return res.blob()
+    // 收集最后一次响应文本用于报错提示
     try {
-      const j = JSON.parse(t) as { detail?: string }
-      if (typeof j.detail === 'string' && j.detail.trim()) {
+      lastText = await res.text()
+    } catch {
+      lastText = ''
+    }
+    // 若返回 JSON 且含 detail 字段，优先抛出该信息
+    try {
+      const j = lastText ? JSON.parse(lastText) : null
+      if (j && typeof j.detail === 'string' && j.detail.trim()) {
         throw new Error(j.detail)
       }
     } catch (e) {
-      if (e instanceof SyntaxError) {
-        /* 非 JSON，走下方网关说明 */
-      } else {
-        throw e
-      }
+      if (!(e instanceof SyntaxError)) throw e
     }
-    throw new Error(httpFailMessage(res.status, t))
+    // 否则继续尝试下一个备选 URL
   }
-  return res.blob()
+
+  throw new Error(httpFailMessage(400, lastText))
 }
 
 export async function deleteV3Task(taskId: string): Promise<void> {
@@ -849,7 +886,7 @@ export async function deleteV3Task(taskId: string): Promise<void> {
   }
 }
 
-/** GET /ai-detection/api/v1/history 单条结构（与 OpenAPI 一致，字段略宽松） */
+/** GET /ai-detection/api/v1/history — 鉴伪检测历史记录（单条结构字段略宽松） */
 export interface DetectionHistoryOutcome {
   result?: V3ResultItem | null
   multi_results?: V3ResultItem[]
@@ -897,9 +934,8 @@ function coerceHistoryCreatedAt(raw: Record<string, unknown>): string {
 }
 
 function coerceApiRecord(raw: Record<string, unknown>): DetectionHistoryApiRecord | null {
-  const rawId = raw.id
-  if (rawId === undefined || rawId === null) return null
-  const id = typeof rawId === 'string' || typeof rawId === 'number' ? rawId : String(rawId)
+  const id = raw.id
+  if (id === undefined || id === null) return null
   const created = coerceHistoryCreatedAt(raw) || '—'
   const st = typeof raw.status === 'string' ? raw.status : 'COMPLETED'
   const mode = typeof raw.mode === 'string' ? raw.mode : 'unknown'

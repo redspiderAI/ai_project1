@@ -11,9 +11,10 @@
             v-for="item in primaryTabs"
             :key="item.key"
             class="tab-btn tab-btn-primary"
-            :class="{ active: activeSection === item.key }"
+            :class="{ active: isLoggedIn && activeSection === item.key, 'tab-btn--need-login': !isLoggedIn }"
             type="button"
-            @click="activeSection = item.key"
+            :title="!isLoggedIn ? '请先登录' : undefined"
+            @click="onSelectSection(item.key)"
           >
             {{ item.label }}
           </button>
@@ -37,7 +38,7 @@
       </div>
     </header>
 
-    <nav v-if="activeSection === 'prediction'" class="sub-nav" aria-label="AI 预测子模块">
+    <nav v-if="isLoggedIn && activeSection === 'prediction'" class="sub-nav" aria-label="AI 预测子模块">
       <div class="sub-nav-inner">
         <button
           v-for="item in predictionSubTabs"
@@ -52,7 +53,27 @@
       </div>
     </nav>
 
-    <main class="page-main" :class="{ 'has-sub-nav': activeSection === 'prediction' }">
+    <main
+      v-if="!isLoggedIn"
+      class="page-main page-main--gate"
+    >
+      <div class="login-gate">
+        <div class="login-gate-icon" aria-hidden="true">
+          <i class="bi bi-shield-lock"></i>
+        </div>
+        <h2 class="login-gate-title">请先登录</h2>
+        <p class="login-gate-text">登录后可使用电子地图、AI 预测、图片真伪检查、AI 比价等全部功能。</p>
+        <button type="button" class="btn login-gate-btn" @click="showLogin = true">
+          <i class="bi bi-box-arrow-in-right me-1" aria-hidden="true"></i>
+          去登录
+        </button>
+      </div>
+    </main>
+    <main
+      v-else
+      class="page-main"
+      :class="{ 'has-sub-nav': activeSection === 'prediction' }"
+    >
       <section v-if="activeSection === 'prediction' && predictionSubTab === 'historyManage'" class="panel inner-page">
         <HistoryManage />
       </section>
@@ -158,6 +179,14 @@ watch(showLogin, (v) => {
   loginError.value = ''
 })
 
+function onSelectSection(key: SectionKey) {
+  if (!isLoggedIn.value) {
+    showLogin.value = true
+    return
+  }
+  activeSection.value = key
+}
+
 function embeddedBasePath(section: 'detect' | 'price') {
   if (section === 'detect') return `${baseUrl}embedded/ai_test/index.html`
   return `${baseUrl}embedded/price_system/index.html`
@@ -198,7 +227,7 @@ async function submitLogin() {
     await login(loginForm.value.username, loginForm.value.password)
     isLoggedIn.value = true
     showLogin.value = false
-    activeSection.value = 'users'
+    activeSection.value = 'map'
   } catch (e) {
     loginError.value = e instanceof Error ? e.message : String(e)
   } finally {
@@ -369,6 +398,10 @@ body {
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
 }
 
+.tab-btn--need-login {
+  opacity: 0.78;
+}
+
 .sub-nav {
   position: sticky;
   top: 72px;
@@ -419,6 +452,63 @@ body {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+.page-main--gate {
+  flex: 1;
+  min-height: calc(100vh - 72px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  background: linear-gradient(180deg, #f8fafc 0%, #eef2f7 100%);
+}
+
+.login-gate {
+  text-align: center;
+  max-width: 420px;
+  padding: 36px 32px 40px;
+  background: #fff;
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(15, 23, 42, 0.1);
+  border: 1px solid #e2e8f0;
+}
+
+.login-gate-icon {
+  font-size: 2.5rem;
+  color: #196cc0;
+  margin-bottom: 12px;
+}
+
+.login-gate-title {
+  margin: 0 0 10px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.login-gate-text {
+  margin: 0 0 22px;
+  font-size: 0.95rem;
+  line-height: 1.55;
+  color: #64748b;
+}
+
+.login-gate-btn {
+  padding: 0.55rem 1.35rem;
+  font-weight: 600;
+  border-radius: 10px;
+  background: #196cc0;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 0.95rem;
+  transition: background 0.15s ease, transform 0.1s ease;
+}
+
+.login-gate-btn:hover {
+  background: #155a9e;
+  transform: translateY(-1px);
 }
 
 .panel {
