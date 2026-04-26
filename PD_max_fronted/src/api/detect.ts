@@ -88,9 +88,9 @@ function useMockOnly(): boolean {
   return String(import.meta.env.VITE_USE_MOCK ?? '').trim() === '1'
 }
 
-function isGatewayLikeStatus(status: number): boolean {
-  return status === 502 || status === 503 || status === 504
-}
+// function isGatewayLikeStatus(status: number): boolean {
+//   return status === 502 || status === 503 || status === 504
+// }
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -100,9 +100,9 @@ function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min
 }
 
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min)
-}
+// function randomRange(min: number, max: number): number {
+//   return min + Math.random() * (max - min)
+// }
 
 async function waitMs(ms: number, signal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -983,7 +983,7 @@ function coerceApiRecord(raw: Record<string, unknown>): DetectionHistoryApiRecor
     }
   }
   return {
-    id,
+    id: '',
     created_at: created,
     mode,
     task_id: taskId,

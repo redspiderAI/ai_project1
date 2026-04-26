@@ -19,8 +19,8 @@
           type="button"
           class="btn btn-sm btn-primary ms-auto"
           :disabled="loading"
-          title="从服务器拉取最新库房与冶炼厂并更新本地缓存"
-          @click="loadAndPlot"
+          title="进入页面时会自动同步；点此立即从服务器拉取库房与冶炼厂并更新缓存"
+          @click="onManualRefreshMarkers"
         >
           <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
           {{ loading ? '加载中…' : '刷新数据' }}
@@ -67,8 +67,8 @@
               type="button"
               class="btn btn-sm btn-primary"
               :disabled="loading"
-              title="从服务器拉取最新库房与冶炼厂并更新本地缓存"
-              @click="loadAndPlot"
+              title="进入页面时会自动同步；点此立即从服务器拉取库房与冶炼厂并更新缓存"
+              @click="onManualRefreshMarkers"
             >
               <span v-if="loading" class="spinner-border spinner-border-sm me-1" role="status" />
               {{ loading ? '加载中…' : '刷新数据' }}
@@ -119,6 +119,10 @@
     </div>
     <div ref="mapWrapRef" class="emap-map-wrap">
       <div ref="mapElRef" class="emap-map" />
+      <div v-if="markersSyncing" class="emap-markers-sync-hint" role="status" aria-live="polite">
+        <span class="spinner-border spinner-border-sm emap-markers-sync-hint-spin" aria-hidden="true" />
+        正在从服务器同步库房与冶炼厂…
+      </div>
       <div
         ref="mapToolsFloatRef"
         class="emap-map-tools-float"
@@ -519,7 +523,7 @@ const COMPARISON_PREREQ_TOAST_MS = 10_000
 const EMAP_TOOLBAR_COLLAPSED_KEY = 'emap.toolbar.collapsed'
 /** 回收品类勾选与吨数：跨页面/刷新保留 */
 const EMAP_CATEGORY_PREFS_KEY = 'emap.categoryPrefs.v1'
-/** 库房/冶炼厂打点数据：离开页面再进入时沿用缓存，仅「刷新数据」重新拉取 */
+/** 库房/冶炼厂打点：本地缓存用于再次进入时先秒显地图，后台拉齐后再一次性替换为服务端数据 */
 const EMAP_MARKERS_CACHE_KEY = 'emap.markersPayload.v1'
 
 /** 地图「按省筛选」：34 个省级行政区（含省/自治区/直辖市/特别行政区），与国家统计口径一致 */
@@ -666,6 +670,8 @@ const provinceOutlineLayerRef = shallowRef<L.GeoJSON | null>(null)
 /** 比价流向折线统一走 SVG，虚线 dash 动画与双层描边更稳定 */
 const flowPathSvgRendererRef = shallowRef<L.SVG | null>(null)
 const loading = ref(false)
+/** 有本地缓存时的静默全量同步：不打断操作，仅地图角标提示 */
+const markersSyncing = ref(false)
 const loadError = ref('')
 const categories = ref<TlCategoryRow[]>([])
 const categoriesLoading = ref(false)
@@ -1298,7 +1304,7 @@ function warehousePopupHtml(p: MapPoint): string {
           typeColor,
         )}">${escapeHtml(typeName)}</span></div>`
       : ''
-  return `<div class="emap-popup emap-popup--warehouse"><strong>${escapeHtml(p.title)}</strong><br/>${typeBlock}<span class="text-muted small">${escapeHtml(
+  return `<div class="emap-popup emap-popup--warehouse"><strong>${escapeHtml(p.title)}</strong><br/>${typeBlock}<span class="emap-popup-subtitle text-muted small">${escapeHtml(
     p.subtitle,
   )}</span></div>`
 }
@@ -1620,7 +1626,11 @@ function renderMarkers(points: MapPoint[]) {
         : smelterIcon(false)
     const marker = L.marker([p.lat, p.lng], { icon })
     const popupHtml =
-      p.kind === 'warehouse' ? warehousePopupHtml(p) : `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="text-muted small">${escapeHtml(p.subtitle)}</span></div>`
+      p.kind === 'warehouse'
+        ? warehousePopupHtml(p)
+        : `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="emap-popup-subtitle text-muted small">${escapeHtml(
+            p.subtitle,
+          )}</span></div>`
     marker.bindPopup(popupHtml)
     marker.bindTooltip(popupHtml, {
       sticky: false,
@@ -2782,9 +2792,20 @@ async function loadCategories() {
   }
 }
 
-async function loadAndPlot() {
+/** 并发拉取库房/冶炼厂时递增，避免先返回的请求覆盖后发起的更新 */
+let markersLoadSeq = 0
+
+type MarkersLoadUi = 'full' | 'silent'
+
+async function loadAndPlot(ui: MarkersLoadUi = 'full') {
+  const seq = ++markersLoadSeq
   loadError.value = ''
-  loading.value = true
+  if (ui === 'full') {
+    loading.value = true
+    markersSyncing.value = false
+  } else {
+    markersSyncing.value = true
+  }
   void loadCategories()
   try {
     const [whRows, smRows] = await Promise.all([fetchTlWarehousesAll(), fetchTlSmeltersAll()])
@@ -2832,16 +2853,26 @@ async function loadAndPlot() {
       }
     }
 
+    if (seq !== markersLoadSeq) return
+
     if (!points.length) {
       loadError.value = '接口未返回可打点的库房或冶炼厂经纬度，请在业务系统补全坐标后刷新。'
     }
     renderMarkers(points)
     writeEmapMarkersCache(points)
   } catch (e) {
+    if (seq !== markersLoadSeq) return
     loadError.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (seq === markersLoadSeq) {
+      loading.value = false
+      markersSyncing.value = false
+    }
   }
+}
+
+function onManualRefreshMarkers() {
+  void loadAndPlot('full')
 }
 
 onMounted(async () => {
@@ -2850,15 +2881,11 @@ onMounted(async () => {
   await nextTick()
   initMap()
   const restored = restoreEmapMarkersFromCache()
-  if (!restored) {
-    await loadAndPlot()
-  } else {
-    void loadCategories()
-    void nextTick(() => {
-      mapRef.value?.invalidateSize()
-      clampMapToolsFloatInWrap()
-    })
-  }
+  await loadAndPlot(restored ? 'silent' : 'full')
+  void nextTick(() => {
+    mapRef.value?.invalidateSize()
+    clampMapToolsFloatInWrap()
+  })
 })
 
 onBeforeUnmount(() => {
@@ -3512,6 +3539,33 @@ onBeforeUnmount(() => {
 
 .emap-geo-nearest-toast-body {
   margin: 0;
+}
+
+/* 静默同步：底边轻提示，不遮罩地图 */
+.emap-markers-sync-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 16px;
+  transform: translateX(-50%);
+  z-index: 1090;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.88);
+  border: 1px solid rgba(34, 211, 238, 0.28);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  max-width: min(420px, calc(100% - 32px));
+}
+
+.emap-markers-sync-hint-spin {
+  flex-shrink: 0;
+  border-width: 2px;
 }
 
 /* 非模态：仅占地图顶部一条，不挡点击 */
@@ -4204,14 +4258,32 @@ onBeforeUnmount(() => {
   filter: saturate(0.48) brightness(1.2) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12));
 }
 
+.emap-popup {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .emap-popup strong {
   font-size: 14px;
+  display: block;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.emap-popup-subtitle {
+  display: block;
+  margin-top: 4px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .emap-popup--warehouse .emap-popup-type {
   margin: 6px 0;
   font-size: 13px;
   line-height: 1.45;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .emap-popup--warehouse .emap-popup-type-label {
@@ -4360,7 +4432,7 @@ onBeforeUnmount(() => {
   pointer-events: none !important;
 }
 
-/* 仓库/冶炼厂悬浮：与弹窗同内容，不挡下方图钉点击 */
+/* 仓库/冶炼厂悬浮：横向卡片；过长用省略号，不撑出框（与点击弹窗区分开） */
 .leaflet-tooltip.emap-marker-hover-tip {
   background: rgba(6, 18, 40, 0.96) !important;
   color: #e2e8f0 !important;
@@ -4370,11 +4442,49 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.45;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  white-space: normal !important;
   max-width: min(280px, 85vw);
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .leaflet-tooltip.emap-marker-hover-tip .leaflet-tooltip-content {
   margin: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.leaflet-tooltip.emap-marker-hover-tip .emap-popup {
+  max-width: 100%;
+}
+
+.leaflet-tooltip.emap-marker-hover-tip .emap-popup strong {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.leaflet-tooltip.emap-marker-hover-tip .emap-popup-subtitle {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.leaflet-tooltip.emap-marker-hover-tip .emap-popup--warehouse .emap-popup-type {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin: 6px 0;
 }
 
 .emap-shell--dashboard .leaflet-tooltip.emap-marker-hover-tip .text-muted {
@@ -4395,6 +4505,15 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(34, 211, 238, 0.32);
   border-radius: 10px;
   box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+  max-width: min(400px, calc(100vw - 32px));
+}
+
+.emap-shell--dashboard .leaflet-popup-content {
+  box-sizing: border-box;
+  max-width: min(380px, calc(100vw - 48px));
+  margin: 10px 14px;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .emap-shell--dashboard .leaflet-popup-tip {
