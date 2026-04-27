@@ -62,7 +62,7 @@
           <i class="bi bi-shield-lock"></i>
         </div>
         <h2 class="login-gate-title">请先登录</h2>
-        <p class="login-gate-text">登录后可使用电子地图、AI 预测、图片真伪检查、AI 比价等全部功能。</p>
+        <p class="login-gate-text">登录后可使用电子地图、AI 预测、图片真伪检查、AI 比价、库房距离监测配置等全部功能。</p>
         <button type="button" class="btn login-gate-btn" @click="showLogin = true">
           <i class="bi bi-box-arrow-in-right me-1" aria-hidden="true"></i>
           去登录
@@ -91,6 +91,9 @@
       </section>
       <section v-else-if="activeSection === 'users'" class="panel inner-page">
         <UserManage />
+      </section>
+      <section v-else-if="activeSection === 'warehouseDistance'" class="panel inner-page">
+        <WarehouseDistanceConfig />
       </section>
       <section v-else class="panel iframe-panel">
         <iframe
@@ -144,10 +147,11 @@ import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
 import ElectronicMap from './pages/ElectronicMap.vue'
 import UserManage from './pages/UserManage.vue'
+import WarehouseDistanceConfig from './pages/WarehouseDistanceConfig.vue'
 import DetectApp from '../PD_max_fronted/src/App.vue'
 import { clearToken, getToken, login } from './api/authApi'
 
-type SectionKey = 'prediction' | 'map' | 'detect' | 'price' | 'users'
+type SectionKey = 'prediction' | 'map' | 'detect' | 'price' | 'warehouseDistance' | 'users'
 type PredictionSubKey = 'historyManage' | 'historyQuery' | 'forecast'
 
 const primaryTabs: Array<{ key: SectionKey; label: string }> = [
@@ -155,6 +159,7 @@ const primaryTabs: Array<{ key: SectionKey; label: string }> = [
   { key: 'prediction', label: 'AI 预测' },
   { key: 'detect', label: '图片真伪检查' },
   { key: 'price', label: 'AI 比价系统' },
+  { key: 'warehouseDistance', label: '库房距离监测配置' },
 ]
 
 const predictionSubTabs: Array<{ key: PredictionSubKey; label: string }> = [
@@ -213,7 +218,7 @@ function openUserManage() {
 function logoutNow() {
   clearToken()
   isLoggedIn.value = false
-  if (activeSection.value === 'users') activeSection.value = 'map'
+  if (activeSection.value === 'users' || activeSection.value === 'warehouseDistance') activeSection.value = 'map'
 }
 
 async function submitLogin() {

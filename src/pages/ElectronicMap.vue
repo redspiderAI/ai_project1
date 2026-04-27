@@ -1262,11 +1262,21 @@ function buildTypeColorMap(types: Record<string, unknown>[]): Map<number, string
   return m
 }
 
-/** 地图图钉颜色：优先后端「颜色配置」；不用「库房类型颜色配置」打点（该字段仅用于弹窗内「类型」文案） */
+/** 地图图钉颜色：与「库房类型维护」一致，按 类型id 使用 get_warehouse_types 中的颜色配置；无类型或接口未覆盖时再退回单条库房字段 */
 function resolveWarehousePinColor(
   row: Record<string, unknown>,
   typeColorById: Map<number, string>,
 ): string {
+  const tid = pickNumber(row, [
+    '仓库类型id',
+    'warehouse_type_id',
+    'type_id',
+    '类型id',
+    '库房类型id',
+    '类型ID',
+  ])
+  if (tid != null && typeColorById.has(tid)) return typeColorById.get(tid)!
+
   const main = pickStr(row, ['颜色配置'])
   if (main) return safeCssColor(main, DEFAULT_WAREHOUSE_COLOR)
 
@@ -1279,8 +1289,6 @@ function resolveWarehousePinColor(
   }
   const own = pickStr(row, ['仓库颜色配置', 'color', '颜色', 'color_config'])
   if (own) return safeCssColor(own, DEFAULT_WAREHOUSE_COLOR)
-  const tid = pickNumber(row, ['仓库类型id', 'warehouse_type_id', 'type_id', '类型id'])
-  if (tid != null && typeColorById.has(tid)) return typeColorById.get(tid)!
   return DEFAULT_WAREHOUSE_COLOR
 }
 
