@@ -14,6 +14,7 @@ import {
   type DetectionHistoryEntry,
 } from './detectionHistory'
 const file = ref<File | null>(null)
+const batchInputRef = ref<HTMLInputElement | null>(null)
 const previewUrl = ref<string | null>(null)
 const historyPreviewUrl = ref<string | null>(null)
 const imgRef = ref<HTMLImageElement | null>(null)
@@ -81,6 +82,18 @@ function assignFile(f: File | null) {
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   assignFile(input.files?.[0] ?? null)
+}
+
+function triggerBatchPick() {
+  batchInputRef.value?.click()
+}
+
+async function onBatchFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files ?? []).filter((f) => /^image\//.test(f.type))
+  input.value = ''
+  if (!files.length) return
+  await runV3Batch(files)
 }
 
 function onDragOver(e: DragEvent) {
@@ -382,15 +395,26 @@ const previewNumberedRenderList = computed(() =>
 )
 
 const previewLightboxOpen = ref(false)
+const previewLightboxSrc = ref('')
+const previewLightboxStageRef = ref<HTMLElement | null>(null)
 
-function openPreviewLightbox() {
-  if (!activePreviewUrl.value) return
+function openPreviewLightbox(src?: string) {
+  const target = (src ?? activePreviewUrl.value ?? '').trim()
+  if (!target) return
+  previewLightboxSrc.value = target
   previewLightboxOpen.value = true
   window.addEventListener('keydown', onPreviewLightboxKeydown)
+  nextTick(() => {
+    const stage = previewLightboxStageRef.value
+    if (!stage) return
+    stage.scrollTop = 0
+    stage.scrollLeft = 0
+  })
 }
 
 function closePreviewLightbox() {
   previewLightboxOpen.value = false
+  previewLightboxSrc.value = ''
   window.removeEventListener('keydown', onPreviewLightboxKeydown)
 }
 
@@ -400,7 +424,7 @@ function onPreviewLightboxKeydown(e: KeyboardEvent) {
 
 function onPreviewImgClick() {
   if (v3SpecifyBbox.value || busy.value) return
-  openPreviewLightbox()
+  openPreviewLightbox(activePreviewUrl.value || '')
 }
 
 const userBboxXYWH = computed(() => {
@@ -635,6 +659,74 @@ async function runV3() {
   }
 }
 
+async function runV3Batch(files: File[]) {
+  if (!files.length) return
+  if (v3SpecifyBbox.value) {
+    errorMsg.value = '批量检测暂不支持“仅分析框选区域”，请关闭后重试。'
+    return
+  }
+  busy.value = true
+  errorMsg.value = null
+  viewingHistoryId.value = null
+  v3Payload.value = null
+  v3TaskId.value = null
+  if (vizObjectUrl.value) {
+    URL.revokeObjectURL(vizObjectUrl.value)
+    vizObjectUrl.value = null
+  }
+  detectAbort.value?.abort()
+  const ac = new AbortController()
+  detectAbort.value = ac
+  let success = 0
+  const failed: string[] = []
+  let lastTaskId: string | null = null
+  let lastPayload: NonNullable<typeof v3Payload.value> | null = null
+  try {
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]!
+      pollStatus.value = `批量检测 ${i + 1}/${files.length}：提交任务…`
+      const submit = await submitV3Detect(f, null, { signal: ac.signal })
+      const taskId = submit.task_id?.trim()
+      if (!taskId) throw new Error(`第 ${i + 1} 张未返回任务 ID`)
+      pollStatus.value = `批量检测 ${i + 1}/${files.length}：分析中…`
+      const data = await waitForV3Completion(taskId, ac.signal)
+      if (data.error_msg?.trim() && !data.result && !(data.multi_results?.length)) {
+        failed.push(`${f.name}: ${data.error_msg}`)
+        continue
+      }
+      if (!data.result && !(data.multi_results?.length)) {
+        failed.push(`${f.name}: 未返回检测结果`)
+        continue
+      }
+      success += 1
+      lastTaskId = taskId
+      lastPayload = {
+        result: data.result ?? null,
+        multi: data.multi_results,
+        error_msg: data.error_msg ?? null,
+      }
+    }
+    v3TaskId.value = lastTaskId
+    if (lastPayload) v3Payload.value = lastPayload
+    pollStatus.value = `批量完成：成功 ${success}/${files.length}`
+    if (failed.length) {
+      errorMsg.value = `以下文件失败（${failed.length}）：\n${failed.slice(0, 5).join('\n')}${failed.length > 5 ? '\n…' : ''}`
+    }
+    void refreshHistoryList()
+    if (lastTaskId) void loadViz(lastTaskId)
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      pollStatus.value = '已取消'
+      return
+    }
+    errorMsg.value = e instanceof Error ? e.message : String(e)
+    pollStatus.value = ''
+  } finally {
+    detectAbort.value = null
+    busy.value = false
+  }
+}
+
 async function loadViz(taskId: string): Promise<boolean> {
   vizLoading.value = true
   try {
@@ -743,6 +835,14 @@ onUnmounted(() => {
               <span class="dz-change">点击更换图片</span>
             </template>
           </label>
+          <input
+            ref="batchInputRef"
+            class="sr-only"
+            type="file"
+            accept="image/*"
+            multiple
+            @change="onBatchFileChange"
+          />
 
           <div class="option-row">
             <label class="switch-label">
@@ -774,6 +874,9 @@ onUnmounted(() => {
           >
             <span v-if="busy" class="btn-spinner" />
             {{ busy ? '分析中…' : '开始分析' }}
+          </button>
+          <button type="button" class="btn btn-secondary" :disabled="busy" @click="triggerBatchPick">
+            批量检测
           </button>
           <button
             v-if="busy"
@@ -1027,7 +1130,12 @@ onUnmounted(() => {
           <div v-if="vizObjectUrl" class="viz-wrap">
             <h3 class="viz-heading">标注示意图</h3>
             <div class="viz-frame">
-              <img :src="vizObjectUrl" alt="检测标注示意" class="viz-img" />
+              <img
+                :src="vizObjectUrl"
+                alt="检测标注示意"
+                class="viz-img viz-img-zoomin"
+                @click="openPreviewLightbox(vizObjectUrl)"
+              />
             </div>
           </div>
 
@@ -1118,7 +1226,7 @@ onUnmounted(() => {
 
     <Teleport to="body">
       <div
-        v-if="previewLightboxOpen && activePreviewUrl"
+        v-if="previewLightboxOpen && previewLightboxSrc"
         class="preview-lightbox"
         role="dialog"
         aria-modal="true"
@@ -1133,7 +1241,9 @@ onUnmounted(() => {
         >
           ×
         </button>
-        <img :src="activePreviewUrl || ''" alt="" class="preview-lightbox-img" />
+        <div ref="previewLightboxStageRef" class="preview-lightbox-stage">
+          <img :src="previewLightboxSrc" alt="" class="preview-lightbox-img" />
+        </div>
         <p class="preview-lightbox-hint">点击背景或 × 关闭，按 Esc 退出</p>
       </div>
     </Teleport>
@@ -2158,6 +2268,10 @@ onUnmounted(() => {
   vertical-align: middle;
 }
 
+.viz-img-zoomin {
+  cursor: zoom-in;
+}
+
 .empty-report {
   margin: 0;
   padding: 2rem 1rem;
@@ -2180,11 +2294,23 @@ onUnmounted(() => {
   box-sizing: border-box;
 }
 
-.preview-lightbox-img {
+.preview-lightbox-stage {
   max-width: 96vw;
   max-height: calc(100vh - 6rem);
-  width: auto;
+  width: 96vw;
+  height: calc(100vh - 6rem);
+  overflow: auto;
+  border-radius: 8px;
+  display: block;
+}
+
+.preview-lightbox-img {
+  max-width: none;
+  max-height: none;
+  width: min(160vw, 1600px);
   height: auto;
+  display: block;
+  margin: 0;
   object-fit: contain;
   border-radius: 8px;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.45);

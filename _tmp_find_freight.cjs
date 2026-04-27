@@ -1,0 +1,5 @@
+const fs = require('fs')
+const s = fs.readFileSync('public/embedded/price_system/assets/app-BZHDhlyu.js', 'utf8')
+const idx = s.indexOf('freight-table-body')
+console.log('freight-table-body idx', idx)
+console.log(s.slice(Math.max(0, idx - 3500), idx + 80))

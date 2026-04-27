@@ -61,7 +61,7 @@ export async function tlGetJson(path: string): Promise<unknown> {
         : ''
     const detail = [bodyMsg, res.statusText].filter(Boolean).join(' — ') || `HTTP ${res.status}`
     throw new Error(
-      `${path} 返回 ${res.status}（${detail}）。开发环境请检查 Vite 代理目标 VITE_TL_TARGET / VITE_API_TARGET 对应服务是否正常；502 多为上游网关或后端不可用。`,
+      `${path} 返回 ${res.status}（${detail}）。开发环境请检查 Vite 代理目标 VITE_TL_TARGET / VITE_API_TARGET 对应服务是否正常；502 多为上游网关或服务不可用。`,
     )
   }
   return data

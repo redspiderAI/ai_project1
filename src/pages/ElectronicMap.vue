@@ -167,6 +167,10 @@
             <input v-model="enableAutoZoomOnPointClick" type="checkbox" class="form-check-input" />
             <span>点击点位是否放大</span>
           </label>
+          <label class="emap-tool-check">
+            <input v-model="showAllComparisonFlows" type="checkbox" class="form-check-input" />
+            <span>展示全部比价线</span>
+          </label>
           <button
             type="button"
             class="btn btn-sm btn-outline-primary w-100 emap-tool-nearest-wh"
@@ -329,6 +333,8 @@
               <tr>
                 <th class="emap-cmp-col-rank">排名</th>
                 <th class="emap-cmp-col-smelter">冶炼厂名称</th>
+                <th class="emap-cmp-col-unit">单价</th>
+                <th class="emap-cmp-col-unit">运费单价</th>
                 <th class="emap-cmp-col-cats">各品种单价</th>
                 <th class="emap-cmp-col-money">总回收价</th>
                 <th class="emap-cmp-col-money">总运费</th>
@@ -337,18 +343,126 @@
             </thead>
             <tbody>
               <tr v-if="!comparisonRanks.length">
-                <td colspan="6" class="text-center text-muted py-3 emap-cmp-table-empty">
+                <td colspan="8" class="text-center text-muted py-3 emap-cmp-table-empty">
                   暂无比价明细（接口已返回成功）
                 </td>
               </tr>
               <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
                 <td class="emap-cmp-col-rank">{{ row.rank }}</td>
-                <td class="emap-cmp-col-smelter">{{ row.smelter }}</td>
-                <td class="emap-cmp-col-cats" v-html="formatComparisonCategoryPricesHtml(row)"></td>
-                <td class="emap-cmp-col-money">{{ formatComparisonTotalRecoveryCell(row.totalRecovery) }}</td>
-                <td class="emap-cmp-col-money">{{ formatComparisonFreightCell(row.totalFreight) }}</td>
+                <td class="emap-cmp-col-smelter">
+                  <span
+                    class="emap-cmp-cell-truncate"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看完整名称"
+                    @click.stop="openComparisonCellDetail('冶炼厂名称', row.smelter)"
+                    @keydown.enter.prevent="openComparisonCellDetail('冶炼厂名称', row.smelter)"
+                    >{{ row.smelter }}</span>
+                </td>
+                <td class="emap-cmp-col-unit">
+                  <span
+                    v-if="comparisonMoneyCellText(row, 'lineUnit')"
+                    class="emap-cmp-cell-truncate"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看完整内容"
+                    @click.stop="
+                      openComparisonCellDetail('单价', comparisonMoneyCellText(row, 'lineUnit')!)
+                    "
+                    @keydown.enter.prevent="
+                      openComparisonCellDetail('单价', comparisonMoneyCellText(row, 'lineUnit')!)
+                    "
+                    >{{ comparisonMoneyCellText(row, 'lineUnit') }}</span>
+                </td>
+                <td class="emap-cmp-col-unit">
+                  <span
+                    v-if="comparisonMoneyCellText(row, 'freightUnit')"
+                    class="emap-cmp-cell-truncate"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看完整内容"
+                    @click.stop="
+                      openComparisonCellDetail(
+                        '运费单价',
+                        comparisonMoneyCellText(row, 'freightUnit')!,
+                      )
+                    "
+                    @keydown.enter.prevent="
+                      openComparisonCellDetail(
+                        '运费单价',
+                        comparisonMoneyCellText(row, 'freightUnit')!,
+                      )
+                    "
+                    >{{ comparisonMoneyCellText(row, 'freightUnit') }}</span>
+                </td>
+                <td class="emap-cmp-col-cats">
+                  <div
+                    class="emap-cmp-cats-clip"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看全部品类单价"
+                    @click.stop="
+                      openComparisonCellDetail(
+                        '各品种单价',
+                        formatComparisonCategoryPricesPlain(row),
+                      )
+                    "
+                    @keydown.enter.prevent="
+                      openComparisonCellDetail(
+                        '各品种单价',
+                        formatComparisonCategoryPricesPlain(row),
+                      )
+                    "
+                    v-html="formatComparisonCategoryPricesHtml(row)"
+                  />
+                </td>
+                <td class="emap-cmp-col-money">
+                  <span
+                    class="emap-cmp-cell-truncate"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看完整内容"
+                    @click.stop="
+                      openComparisonCellDetail(
+                        '总回收价',
+                        formatComparisonTotalRecoveryCell(row.totalRecovery),
+                      )
+                    "
+                    @keydown.enter.prevent="
+                      openComparisonCellDetail(
+                        '总回收价',
+                        formatComparisonTotalRecoveryCell(row.totalRecovery),
+                      )
+                    "
+                    >{{ formatComparisonTotalRecoveryCell(row.totalRecovery) }}</span>
+                </td>
+                <td class="emap-cmp-col-money">
+                  <span
+                    class="emap-cmp-cell-truncate"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看完整内容"
+                    @click.stop="
+                      openComparisonCellDetail('总运费', formatComparisonFreightCell(row.totalFreight))
+                    "
+                    @keydown.enter.prevent="
+                      openComparisonCellDetail('总运费', formatComparisonFreightCell(row.totalFreight))
+                    "
+                    >{{ formatComparisonFreightCell(row.totalFreight) }}</span>
+                </td>
                 <td class="emap-cmp-col-money text-success fw-semibold">
-                  ¥ {{ toDisplayNum(row.netProfit).toLocaleString('zh-CN') }}
+                  <span
+                    class="emap-cmp-cell-truncate"
+                    tabindex="0"
+                    role="button"
+                    title="点击查看完整内容"
+                    @click.stop="
+                      openComparisonCellDetail('利润', formatComparisonNetProfitCell(row))
+                    "
+                    @keydown.enter.prevent="
+                      openComparisonCellDetail('利润', formatComparisonNetProfitCell(row))
+                    "
+                    >{{ formatComparisonNetProfitCell(row) }}</span>
                 </td>
               </tr>
             </tbody>
@@ -456,6 +570,42 @@
         </div>
       </div>
     </div>
+
+    <!-- 比价表：单元格过长省略，点击看全文（类 Excel） -->
+    <div
+      v-if="comparisonCellDetail"
+      class="emap-cmp-cell-detail-backdrop"
+      role="presentation"
+      @click="closeComparisonCellDetail"
+    >
+      <div
+        class="emap-cmp-cell-detail-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="emap-cmp-cell-detail-title"
+        @click.stop
+      >
+        <div class="emap-cmp-cell-detail-head">
+          <h5 id="emap-cmp-cell-detail-title" class="emap-cmp-cell-detail-title">
+            {{ comparisonCellDetail.label }}
+          </h5>
+          <button
+            type="button"
+            class="emap-cmp-cell-detail-close"
+            aria-label="关闭"
+            @click="closeComparisonCellDetail"
+          >
+            ×
+          </button>
+        </div>
+        <div class="emap-cmp-cell-detail-body">{{ comparisonCellDetail.text }}</div>
+        <div class="emap-cmp-cell-detail-foot">
+          <button type="button" class="btn btn-sm btn-secondary" @click="closeComparisonCellDetail">
+            关闭
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -501,6 +651,10 @@ type ComparisonRankItem = {
   qtySum: number
   /** 与嵌入页「智能比价」各品种单价列一致：品类名 → 单价 */
   categoryPrices?: Record<string, number | null>
+  /** 明细字段「单价」按吨数加权；无非空值时不展示 */
+  lineUnitPrice?: number
+  /** 明细字段「运费单价」按吨数加权 */
+  freightUnitPrice?: number
 }
 
 /** 与「送货量预测」折线图弹窗下方展示一致 */
@@ -715,9 +869,13 @@ const forecastModalValues = ref<number[]>([])
 const comparisonModalVisible = ref(false)
 const comparisonModalTitle = ref('比价结果')
 const comparisonPanelCollapsed = ref(false)
+/** 比价表单元格点击后展示的完整文案（列标题 + 正文） */
+const comparisonCellDetail = ref<{ label: string; text: string } | null>(null)
 const forecastTrendCanvasRef = ref<HTMLCanvasElement | null>(null)
 const enableCoordPick = ref(false)
 const enableAutoZoomOnPointClick = ref(false)
+/** false: 仅前3条；true: 展示全部（第4条起细灰线） */
+const showAllComparisonFlows = ref(true)
 const lastClickedCoordText = ref('')
 const mapToolsCollapsed = ref(true)
 
@@ -1758,6 +1916,53 @@ function formatComparisonFreightCell(n: number): string {
   return `¥${Number(n || 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 }
 
+/** 明细「单价」「运费单价」：无有效值时单元格留空（不显示 —） */
+function formatComparisonOptionalMoneyCell(n: number | undefined): string {
+  if (n === undefined || !Number.isFinite(n)) return ''
+  return `¥${Number(n).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+}
+
+function comparisonMoneyCellText(
+  row: ComparisonRankItem,
+  kind: 'lineUnit' | 'freightUnit',
+): string {
+  if (kind === 'lineUnit') return formatComparisonOptionalMoneyCell(row.lineUnitPrice)
+  return formatComparisonOptionalMoneyCell(row.freightUnitPrice)
+}
+
+/** 各品种单价：弹层用纯文本（无 HTML） */
+function formatComparisonCategoryPricesPlain(row: ComparisonRankItem): string {
+  const raw = row.categoryPrices
+  const entries = raw ? Object.entries(raw) : []
+  if (!entries.length) {
+    if (row.unitPrice > 0) {
+      return `均价: ¥${Number(toDisplayNum(row.unitPrice)).toLocaleString('zh-CN')}`
+    }
+    return '—'
+  }
+  return entries
+    .map(([cat, v]) => {
+      const label = String(cat || '').trim() || '—'
+      if (v == null || !Number.isFinite(v)) return `${label}: —`
+      return `${label}: ¥${Number(v).toLocaleString('zh-CN')}`
+    })
+    .join('\n')
+}
+
+function formatComparisonNetProfitCell(row: ComparisonRankItem): string {
+  return `¥ ${toDisplayNum(row.netProfit).toLocaleString('zh-CN')}`
+}
+
+function openComparisonCellDetail(label: string, text: string) {
+  const t = String(text ?? '').trim()
+  if (!t) return
+  comparisonCellDetail.value = { label, text: String(text) }
+}
+
+function closeComparisonCellDetail() {
+  comparisonCellDetail.value = null
+}
+
 function clearComparisonOverlays() {
   cancelFlowOverlayAnimations()
   stopFlowAnimations()
@@ -1767,6 +1972,7 @@ function clearComparisonOverlays() {
   lastComparisonSortKey.value = ''
   compareError.value = ''
   comparisonModalVisible.value = false
+  comparisonCellDetail.value = null
 }
 
 function stopFlowAnimations() {
@@ -1881,39 +2087,80 @@ function quadraticBezierLatLng(
   return out
 }
 
+/**
+ * 同一库房出发的多条流向方位接近时会叠在一起；按在列表中的次序分配正负与强弱不同的弧度，
+ * 使贝塞尔鼓包方向交替、弯曲量拉开（bend 越大弧线越鼓）。
+ */
+function comparisonFlowBend(listIdx: number, totalFlows: number): number {
+  if (totalFlows <= 1) return 0.52
+  const u = listIdx / (totalFlows - 1)
+  const magnitude = 0.3 + u * 0.85
+  const sign = listIdx % 2 === 0 ? 1 : -1
+  return sign * magnitude
+}
+
 type ComparisonFlowPalette = {
   base: string
   main: string
   baseClass: string
   lineClass: string
   moverInnerClass: string
+  baseWeight: number
+  dashWeight: number
+  opacity: number
+  showMover: boolean
+  dashArray: string
 }
 
 function comparisonFlowPalette(rank: number): ComparisonFlowPalette {
+  const top3 = {
+    baseWeight: 6,
+    dashWeight: 4,
+    opacity: 1,
+    showMover: true,
+    dashArray: '12 38',
+  }
   if (rank <= 1) {
     return {
-      base: 'rgba(5, 150, 105, 0.34)',
-      main: '#059669',
+      base: 'rgba(5, 150, 105, 0.45)',
+      main: '#10b981',
       baseClass: 'emap-flow-line-base emap-flow-line-base--best',
       lineClass: 'emap-flow-line emap-flow-line--best',
       moverInnerClass: 'emap-flow-mover emap-flow-mover--best',
+      ...top3,
     }
   }
   if (rank === 2) {
     return {
-      base: 'rgba(234, 88, 12, 0.34)',
-      main: '#ea580c',
+      base: 'rgba(234, 88, 12, 0.45)',
+      main: '#f97316',
       baseClass: 'emap-flow-line-base emap-flow-line-base--orange',
       lineClass: 'emap-flow-line emap-flow-line--orange',
       moverInnerClass: 'emap-flow-mover emap-flow-mover--orange',
+      ...top3,
+    }
+  }
+  if (rank === 3) {
+    return {
+      base: 'rgba(59, 130, 246, 0.4)',
+      main: '#3b82f6',
+      baseClass: 'emap-flow-line-base emap-flow-line-base--third',
+      lineClass: 'emap-flow-line emap-flow-line--third',
+      moverInnerClass: 'emap-flow-mover emap-flow-mover--third',
+      ...top3,
     }
   }
   return {
-    base: 'rgba(220, 38, 38, 0.34)',
-    main: '#dc2626',
-    baseClass: 'emap-flow-line-base emap-flow-line-base--red',
-    lineClass: 'emap-flow-line emap-flow-line--red',
-    moverInnerClass: 'emap-flow-mover emap-flow-mover--red',
+    base: 'rgba(100, 116, 139, 0.48)',
+    main: 'rgba(203, 213, 225, 0.88)',
+    baseClass: 'emap-flow-line-base emap-flow-line-base--muted',
+    lineClass: 'emap-flow-line emap-flow-line--muted',
+    moverInnerClass: 'emap-flow-mover emap-flow-mover--muted',
+    baseWeight: 4,
+    dashWeight: 2.6,
+    opacity: 0.92,
+    showMover: false,
+    dashArray: '10 22',
   }
 }
 
@@ -2076,21 +2323,36 @@ function mergeComparisonRanksWithDetailRows(
     let qtySum = 0
     let unitNum = 0
     let unitDen = 0
+    let strictLineNum = 0
+    let strictLineDen = 0
+    let strictFpuNum = 0
+    let strictFpuDen = 0
     for (const row of rows) {
       const cat = pickStr(row, ['品类', 'category', '品种', '产品品种', 'category_name']) || '—'
       const upDetail = pickDetailUnitPrice(row, priceMode)
       categoryPrices[cat] = upDetail != null && Number.isFinite(upDetail) ? upDetail : null
       const qty = pickNumber(row, ['吨数', 'quantity', 'qty', '需求吨数', 'weight']) ?? 0
+      const qtyEff = Math.max(0, qty)
       const up = pickNumber(row, ['单价', '基准价', '含3%税价', '报价', 'unit_price', '最优价'])
       const tot = pickNumber(row, ['总价', '报价金额', '物料总价', 'total_recovery', 'material_sum'])
       const tf = pickNumber(row, ['总运费', '运费合计'])
       if (tot != null && Number.isFinite(tot)) totalRecovery += tot
       else if (up != null && qty > 0) totalRecovery += up * qty
       if (tf != null && Number.isFinite(tf)) totalFreight += tf
-      qtySum += Math.max(0, qty)
+      qtySum += qtyEff
       if (up != null && qty > 0) {
         unitNum += up * qty
         unitDen += qty
+      }
+      const strictLine = pickNumber(row, ['单价'])
+      if (strictLine != null && Number.isFinite(strictLine) && qtyEff > 0) {
+        strictLineNum += strictLine * qtyEff
+        strictLineDen += qtyEff
+      }
+      const strictFpu = pickNumber(row, ['运费单价', 'freight_per_ton'])
+      if (strictFpu != null && Number.isFinite(strictFpu) && qtyEff > 0) {
+        strictFpuNum += strictFpu * qtyEff
+        strictFpuDen += qtyEff
       }
     }
     const unitPrice =
@@ -2102,6 +2364,8 @@ function mergeComparisonRanksWithDetailRows(
       totalRecovery: toDisplayNum(totalRecovery),
       totalFreight: toDisplayNum(totalFreight),
       qtySum: toDisplayNum(qtySum),
+      lineUnitPrice: strictLineDen > 0 ? toDisplayNum(strictLineNum / strictLineDen) : undefined,
+      freightUnitPrice: strictFpuDen > 0 ? toDisplayNum(strictFpuNum / strictFpuDen) : undefined,
     }
   })
 }
@@ -2182,6 +2446,8 @@ function parseRankRowsLoose(
       '3%含税价',
     ])
     const unitPrice = unitPriceRaw != null ? unitPriceRaw : qtySum > 0 ? totalRecovery / qtySum : 0
+    const strictLineUp = pickNumber(row, ['单价'])
+    const strictFpu = pickNumber(row, ['运费单价', 'freight_per_ton'])
     out.push({
       rank,
       smelter,
@@ -2190,6 +2456,10 @@ function parseRankRowsLoose(
       totalRecovery: toDisplayNum(totalRecovery),
       totalFreight: toDisplayNum(totalFreight),
       qtySum: toDisplayNum(qtySum),
+      lineUnitPrice:
+        strictLineUp != null && Number.isFinite(strictLineUp) ? toDisplayNum(strictLineUp) : undefined,
+      freightUnitPrice:
+        strictFpu != null && Number.isFinite(strictFpu) ? toDisplayNum(strictFpu) : undefined,
     })
   }
   return out.sort((a, b) => a.rank - b.rank)
@@ -2206,7 +2476,13 @@ function rankingsFromComparisonResponse(
     priceMode,
   )
   if (fromApi.length) {
-    return rerankSequentially(mergeComparisonRanksWithDetailRows(fromApi, detailRows, priceMode))
+    const mergedTop = mergeComparisonRanksWithDetailRows(fromApi, detailRows, priceMode)
+    if (!detailRows.length) return rerankSequentially(mergedTop)
+    // 有些接口只返回前几名排行；其余冶炼厂从明细聚合补齐，便于“展示全部比价线”绘制全量流向
+    const allFromDetail = aggregateComparisonRows(detailRows, priceMode)
+    const existed = new Set(mergedTop.map((x) => x.smelter.trim()))
+    const extras = allFromDetail.filter((x) => !existed.has(x.smelter.trim()))
+    return rerankSequentially([...mergedTop, ...extras])
   }
   for (const rows of walkObjectArraysDeep(payload ?? raw)) {
     const parsed = parseRankRowsLoose(rows, priceMode)
@@ -2237,6 +2513,10 @@ function aggregateComparisonRows(
       totalFreightSum: number
       qtySum: number
       categoryPrices: Record<string, number | null>
+      strictLineNum: number
+      strictLineDen: number
+      strictFpuNum: number
+      strictFpuDen: number
     }
   >()
   for (const row of rows) {
@@ -2259,17 +2539,32 @@ function aggregateComparisonRows(
         totalFreightSum: 0,
         qtySum: 0,
         categoryPrices: {},
+        strictLineNum: 0,
+        strictLineDen: 0,
+        strictFpuNum: 0,
+        strictFpuDen: 0,
       })
     }
     const g = grouped.get(key)!
     const cat = pickStr(row, ['品类', 'category', '品种', '产品品种', 'category_name']) || '—'
     const upLine = pickDetailUnitPrice(row, priceMode)
     g.categoryPrices[cat] = upLine != null && Number.isFinite(upLine) ? upLine : null
-    g.materialSum += unitPrice * Math.max(0, qty)
+    const qtyEff = Math.max(0, qty)
+    g.materialSum += unitPrice * qtyEff
     g.freightSum += freight
     g.freightCount += 1
     if (lineTotalFreight != null && Number.isFinite(lineTotalFreight)) g.totalFreightSum += lineTotalFreight
-    g.qtySum += Math.max(0, qty)
+    g.qtySum += qtyEff
+    const strictLine = pickNumber(row, ['单价'])
+    if (strictLine != null && Number.isFinite(strictLine) && qtyEff > 0) {
+      g.strictLineNum += strictLine * qtyEff
+      g.strictLineDen += qtyEff
+    }
+    const strictFpuOnly = pickNumber(row, ['运费单价', 'freight_per_ton'])
+    if (strictFpuOnly != null && Number.isFinite(strictFpuOnly) && qtyEff > 0) {
+      g.strictFpuNum += strictFpuOnly * qtyEff
+      g.strictFpuDen += qtyEff
+    }
   }
   return [...grouped.values()]
     .map((g) => {
@@ -2298,6 +2593,8 @@ function aggregateComparisonRows(
         totalFreight: toDisplayNum(totalFreightFromLine),
         qtySum: toDisplayNum(g.qtySum),
         categoryPrices: g.categoryPrices,
+        lineUnitPrice: g.strictLineDen > 0 ? toDisplayNum(g.strictLineNum / g.strictLineDen) : undefined,
+        freightUnitPrice: g.strictFpuDen > 0 ? toDisplayNum(g.strictFpuNum / g.strictFpuDen) : undefined,
       }
     })
     .sort((a, b) => b.netProfit - a.netProfit)
@@ -2323,25 +2620,39 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
   flowLayer.clearLayers()
   tipLayer.clearLayers()
   const list = ranks.slice(0, MAX_MAP_FLOW_TARGETS)
+  type FlowEntry = { row: ComparisonRankItem; listIdx: number; smelter: MapPoint }
+  const entries: FlowEntry[] = []
   for (let i = 0; i < list.length; i++) {
     const row = list[i]!
     const smelter = findSmelterPoint(row.smelter)
     if (!smelter) continue
+    entries.push({ row, listIdx: i, smelter })
+  }
+  const visibleEntries = showAllComparisonFlows.value
+    ? entries
+    : entries.filter((e) => e.row.rank <= 3)
+  /** 先画其余线，再画前三，避免重叠时被后画的低档线盖住 */
+  const back = visibleEntries.filter((e) => e.row.rank > 3)
+  const front = visibleEntries.filter((e) => e.row.rank <= 3)
+  const totalFlows = visibleEntries.length
+  const drawOne = (e: FlowEntry) => {
+    const { row, listIdx, smelter } = e
+    const bend = comparisonFlowBend(listIdx, totalFlows)
     const curve = quadraticBezierLatLng(
       warehouse.lat,
       warehouse.lng,
       smelter.lat,
       smelter.lng,
-      56,
-      0.44 + (i % 5) * 0.02,
+      64,
+      bend,
     )
     const palette = comparisonFlowPalette(row.rank)
-    const staggerClass = `emap-flow-stagger-${i % 6}`
+    const staggerClass = palette.showMover ? `emap-flow-stagger-${listIdx % 6}` : ''
     const rendererOpt = flowRenderer ? { renderer: flowRenderer } : {}
     const baseOpts = {
       color: palette.base,
-      weight: 5,
-      opacity: 1,
+      weight: palette.baseWeight,
+      opacity: palette.opacity,
       lineCap: 'round' as const,
       lineJoin: 'round' as const,
       className: palette.baseClass,
@@ -2350,23 +2661,27 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
     }
     const dashOpts = {
       color: palette.main,
-      weight: 3.2,
-      opacity: 1,
+      weight: palette.dashWeight,
+      opacity: palette.opacity,
       lineCap: 'round' as const,
       lineJoin: 'round' as const,
-      dashArray: '12 38',
-      className: `${palette.lineClass} ${staggerClass}`,
+      dashArray: palette.dashArray,
+      className: [palette.lineClass, staggerClass].filter(Boolean).join(' '),
       interactive: false,
       ...rendererOpt,
     }
     L.polyline(curve, baseOpts).addTo(flowLayer)
     L.polyline(curve, dashOpts).addTo(flowLayer)
-    attachFlowMoverAlongCurve(flowLayer, curve, 2200 + (i % 4) * 280, palette.moverInnerClass)
+    if (palette.showMover) {
+      attachFlowMoverAlongCurve(flowLayer, curve, 2200 + (listIdx % 4) * 280, palette.moverInnerClass)
+    }
+    const tipClass =
+      row.rank <= 3 ? 'emap-rank-tip emap-rank-tip--top3' : 'emap-rank-tip emap-rank-tip--dim'
     L.tooltip({
       permanent: true,
       direction: 'top',
       offset: [0, -8],
-      className: 'emap-rank-tip',
+      className: tipClass,
     })
       .setLatLng([smelter.lat, smelter.lng])
       .setContent(
@@ -2374,7 +2689,15 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
       )
       .addTo(tipLayer)
   }
+  for (const e of back) drawOne(e)
+  for (const e of front) drawOne(e)
 }
+
+watch(showAllComparisonFlows, () => {
+  const wh = selectedWarehouse.value
+  if (!wh || !comparisonRanks.value.length) return
+  renderComparisonOverlay(wh, comparisonRanks.value)
+})
 
 type RunComparisonOptions = {
   /** 仅「重新比价」按钮为 true；地图点仓库缺条件时静默，不挡操作 */
@@ -2510,6 +2833,7 @@ function openComparisonModal() {
 function closeComparisonModal() {
   comparisonModalVisible.value = false
   comparisonPanelCollapsed.value = false
+  comparisonCellDetail.value = null
 }
 
 function drawForecastTrendChart() {
@@ -3226,8 +3550,8 @@ onBeforeUnmount(() => {
 
 .emap-map-tools-float--default {
   right: 0;
-  top: 50%;
-  transform: translateY(-50%);
+  top: 44%;
+  transform: translateY(-44%);
 }
 
 .emap-map-tools-bubble {
@@ -3621,7 +3945,7 @@ onBeforeUnmount(() => {
   top: 12px;
   left: 12px;
   z-index: 1000;
-  width: min(560px, calc(100% - 24px));
+  width: min(720px, calc(100% - 24px));
   max-height: calc(100% - 24px);
   background: rgba(6, 18, 40, 0.92);
   border: 1px solid rgba(34, 211, 238, 0.3);
@@ -3750,6 +4074,7 @@ onBeforeUnmount(() => {
   vertical-align: middle;
   padding-left: 6px;
   padding-right: 6px;
+  min-width: 0;
 }
 
 .emap-cmp-table .emap-cmp-col-rank {
@@ -3758,26 +4083,135 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-table .emap-cmp-col-smelter {
-  width: 22%;
+  width: 16%;
   max-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.emap-cmp-table .emap-cmp-col-unit {
+  width: 11%;
+  font-size: 11px;
 }
 
 .emap-cmp-table .emap-cmp-col-cats {
-  width: 28%;
-  white-space: normal;
-  line-height: 1.45;
-  word-break: break-word;
+  width: 22%;
   vertical-align: middle;
-  padding-top: 8px;
-  padding-bottom: 8px;
+  padding-top: 6px;
+  padding-bottom: 6px;
+  text-align: left;
 }
 
 .emap-cmp-table .emap-cmp-col-money {
-  width: 14.5%;
+  width: 12%;
+}
+
+.emap-cmp-cell-truncate {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
+  cursor: pointer;
+  text-align: center;
+}
+
+.emap-cmp-col-smelter .emap-cmp-cell-truncate {
+  text-align: center;
+}
+
+.emap-cmp-cell-truncate:focus-visible {
+  outline: 2px solid rgba(34, 211, 238, 0.65);
+  outline-offset: 1px;
+}
+
+.emap-cmp-cats-clip {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  overflow: hidden;
+  max-height: 2.9em;
+  line-height: 1.45;
+  word-break: break-word;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+
+.emap-cmp-cell-detail-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 12050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(2, 8, 20, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.emap-cmp-cell-detail-card {
+  width: min(520px, calc(100vw - 40px));
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 24, 48, 0.98);
+  border: 1px solid rgba(34, 211, 238, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.55);
+  color: #e2e8f0;
+}
+
+.emap-cmp-cell-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid rgba(34, 211, 238, 0.22);
+}
+
+.emap-cmp-cell-detail-title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #f8fafc;
+  min-width: 0;
+}
+
+.emap-cmp-cell-detail-close {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 24px;
+  line-height: 1;
+  padding: 0 4px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+.emap-cmp-cell-detail-close:hover {
+  color: #f1f5f9;
+  background: rgba(34, 211, 238, 0.12);
+}
+
+.emap-cmp-cell-detail-body {
+  padding: 14px 16px;
+  overflow: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+  flex: 1;
+  min-height: 0;
+}
+
+.emap-cmp-cell-detail-foot {
+  padding: 10px 14px 12px;
+  border-top: 1px solid rgba(34, 211, 238, 0.18);
+  display: flex;
+  justify-content: flex-end;
 }
 
 .emap-cmp-table td.emap-cmp-table-empty {
@@ -4314,6 +4748,15 @@ onBeforeUnmount(() => {
 .leaflet-container svg path.emap-flow-line-base--red {
   filter: drop-shadow(0 0 3px rgba(220, 38, 38, 0.78));
 }
+.leaflet-container svg path.emap-flow-line-base--third {
+  filter: drop-shadow(0 0 4px rgba(59, 130, 246, 0.72));
+}
+.leaflet-container svg path.emap-flow-line-base--muted {
+  filter: drop-shadow(0 0 2px rgba(148, 163, 184, 0.5));
+}
+.leaflet-container svg path.emap-flow-line--muted {
+  animation: emap-flow 1.2s linear infinite;
+}
 
 .leaflet-container .leaflet-marker:has(.emap-flow-mover-wrap) {
   pointer-events: none !important;
@@ -4391,6 +4834,16 @@ onBeforeUnmount(() => {
     0 1px 0 rgba(255, 255, 255, 0.85),
     0 2px 6px rgba(0, 0, 0, 0.35);
 }
+.emap-flow-mover--third {
+  color: #3b82f6;
+  text-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.85),
+    0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.emap-flow-mover--muted {
+  color: #64748b;
+  text-shadow: none;
+}
 
 .emap-flow-arrow-wrap {
   background: transparent;
@@ -4430,6 +4883,19 @@ onBeforeUnmount(() => {
   line-height: 1.35;
   padding: 6px 8px;
   pointer-events: none !important;
+}
+
+.leaflet-tooltip.emap-rank-tip--top3 {
+  border: 1px solid rgba(34, 211, 238, 0.35);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+}
+
+.leaflet-tooltip.emap-rank-tip--dim {
+  opacity: 0.5;
+  font-size: 10px;
+  padding: 4px 6px;
+  background: rgba(15, 23, 42, 0.72);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
 }
 
 /* 仓库/冶炼厂悬浮：横向卡片；过长用省略号，不撑出框（与点击弹窗区分开） */
