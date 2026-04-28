@@ -1261,8 +1261,8 @@
         color: #475467;
       }
       .excel-preview-scroll {
-        max-height: 280px;
-        overflow: auto;
+        max-height: none;
+        overflow: visible;
       }
       .excel-preview-table {
         width: 100%;
@@ -1277,6 +1277,41 @@
         vertical-align: top;
         white-space: nowrap;
       }
+      .excel-remove-btn {
+        border: 1px solid #ef4444;
+        color: #b91c1c;
+        background: #fff;
+        border-radius: 6px;
+        padding: 2px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .excel-remove-btn:hover {
+        background: #fef2f2;
+      }
+      .excel-preview-pager {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 8px;
+        padding: 8px 10px;
+        border-top: 1px solid #e5e7eb;
+        background: #fff;
+        font-size: 12px;
+        color: #475467;
+      }
+      .excel-preview-pager button {
+        border: 1px solid #cbd5e1;
+        border-radius: 6px;
+        background: #fff;
+        color: #334155;
+        padding: 2px 8px;
+        cursor: pointer;
+      }
+      .excel-preview-pager button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
     </style>
     <script>
       ;(() => {
@@ -1284,6 +1319,8 @@
           mounted: false,
           uploadResp: null,
           confirmPayload: null,
+          previewPage: 1,
+          previewPageSize: 10,
         }
         const excelDelegateState = { bound: false }
 
@@ -1313,17 +1350,61 @@
           return []
         }
 
+        function toFiniteNumber(v) {
+          if (typeof v === 'number' && Number.isFinite(v)) return v
+          if (typeof v === 'string' && v.trim() !== '') {
+            const n = Number(v)
+            if (Number.isFinite(n)) return n
+          }
+          return null
+        }
+
+        function roundPrice(n) {
+          return Math.round(n * 100) / 100
+        }
+
+        // 三价联动：价格(未税) / 3% / 13% 只要有一个就补齐其余两个
+        function normalizePriceItem(row) {
+          const out = row && typeof row === 'object' ? { ...row } : {}
+          const pBase = toFiniteNumber(out['价格'])
+          const p3 = toFiniteNumber(out['价格_3pct增值税'])
+          const p13 = toFiniteNumber(out['价格_13pct增值税'])
+
+          let base = pBase
+          if (base == null && p3 != null) base = p3 / 1.03
+          if (base == null && p13 != null) base = p13 / 1.13
+          if (base == null) return out
+
+          base = roundPrice(base)
+          out['价格'] = base
+          out['价格_3pct增值税'] = roundPrice(base * 1.03)
+          out['价格_13pct增值税'] = roundPrice(base * 1.13)
+          return out
+        }
+
         function pickPayload(resp) {
           const root = resp && typeof resp === 'object' ? resp : {}
           const data = root.data && typeof root.data === 'object' ? root.data : {}
-          const details = data.details && typeof data.details === 'object' ? data.details : {}
+          const detailList = Array.isArray(data.details)
+            ? data.details.filter((x) => x && typeof x === 'object')
+            : data.details && typeof data.details === 'object'
+              ? [data.details]
+              : []
+          const firstDetail = detailList[0] && typeof detailList[0] === 'object' ? detailList[0] : {}
           const fullData =
-            details.full_data && typeof details.full_data === 'object'
-              ? details.full_data
+            firstDetail.full_data && typeof firstDetail.full_data === 'object'
+              ? firstDetail.full_data
               : data.full_data && typeof data.full_data === 'object'
                 ? data.full_data
                 : {}
-          const items = firstArray(details.items, data.items, root.items, data['数据'], root['数据'])
+          const itemsFromDetails = detailList.flatMap((d) =>
+            Array.isArray(d.items) ? d.items.filter((x) => x && typeof x === 'object') : [],
+          )
+          const itemsRaw =
+            itemsFromDetails.length > 0
+              ? itemsFromDetails
+              : firstArray(firstDetail.items, data.items, root.items, data['数据'], root['数据'])
+          const items = Array.isArray(itemsRaw) ? itemsRaw.map((it) => normalizePriceItem(it)) : []
           const quoteDate =
             (data.suggested_quote_date && String(data.suggested_quote_date).trim()) ||
             (fullData.quote_date && String(fullData.quote_date).trim()) ||
@@ -1336,9 +1417,25 @@
           }
         }
 
+        function updateConfirmEnabled(ui) {
+          const rows = state.confirmPayload && Array.isArray(state.confirmPayload['数据']) ? state.confirmPayload['数据'] : []
+          ui.confirmBtn.disabled = rows.length === 0
+        }
+
+        function clampPreviewPage(totalRows) {
+          const totalPages = Math.max(1, Math.ceil(totalRows / state.previewPageSize))
+          if (!Number.isFinite(state.previewPage) || state.previewPage < 1) state.previewPage = 1
+          if (state.previewPage > totalPages) state.previewPage = totalPages
+          return totalPages
+        }
+
         function renderPreview(container, payload) {
           const rows = Array.isArray(payload['数据']) ? payload['数据'] : []
-          const show = rows.slice(0, 60)
+          const totalPages = clampPreviewPage(rows.length)
+          const page = state.previewPage
+          const start = (page - 1) * state.previewPageSize
+          const end = start + state.previewPageSize
+          const show = rows.slice(start, end)
           const table = show.length
             ? `
             <table class="excel-preview-table">
@@ -1347,20 +1444,26 @@
                   <th>冶炼厂</th>
                   <th>品类</th>
                   <th>价格</th>
+                  <th>3%含税价</th>
+                  <th>13%含税价</th>
                   <th>口径</th>
                   <th>备注</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody>
                 ${show
-                  .map((r) => {
+                  .map((r, i) => {
                     const o = r && typeof r === 'object' ? r : {}
                     return `<tr>
                       <td>${esc(o['冶炼厂名'])}</td>
                       <td>${esc(o['品类名'])}</td>
                       <td>${esc(o['价格'])}</td>
+                      <td>${esc(o['价格_3pct增值税'])}</td>
+                      <td>${esc(o['价格_13pct增值税'])}</td>
                       <td>${esc(o['价格口径'])}</td>
                       <td>${esc(o['备注'])}</td>
+                      <td><button type="button" class="excel-remove-btn" data-remove-idx="${i}">移除</button></td>
                     </tr>`
                   })
                   .join('')}
@@ -1372,9 +1475,13 @@
             <div class="excel-preview-wrap">
               <div class="excel-preview-head">
                 报价日期：${esc(payload['报价日期'])} ｜ 明细条数：${rows.length}
-                ${rows.length > show.length ? `｜ 预览前 ${show.length} 条` : ''}
               </div>
               <div class="excel-preview-scroll">${table}</div>
+              <div class="excel-preview-pager">
+                <button type="button" data-page-act="prev" ${page <= 1 ? 'disabled' : ''}>上一页</button>
+                <span>第 ${page} / ${totalPages} 页（每页 ${state.previewPageSize} 条）</span>
+                <button type="button" data-page-act="next" ${page >= totalPages ? 'disabled' : ''}>下一页</button>
+              </div>
             </div>
           `
         }
@@ -1407,9 +1514,10 @@
             }
             state.uploadResp = json
             state.confirmPayload = pickPayload(json)
+            state.previewPage = 1
             renderPreview(ui.preview, state.confirmPayload)
             ui.msg.textContent = `Excel 上传成功，已生成待确认数据。`
-            ui.confirmBtn.disabled = !Array.isArray(state.confirmPayload['数据']) || state.confirmPayload['数据'].length === 0
+            updateConfirmEnabled(ui)
           } catch (e) {
             ui.err.textContent = e instanceof Error ? e.message : String(e)
           } finally {
@@ -1566,7 +1674,9 @@
             const uploadBtn = target.closest('#excel-import-upload-btn')
             const downloadBtn = target.closest('#excel-import-download-btn')
             const confirmBtn = target.closest('#excel-import-confirm-btn')
-            if (!uploadBtn && !downloadBtn && !confirmBtn) return
+            const removeBtn = target.closest('.excel-remove-btn')
+            const pageBtn = target.closest('[data-page-act]')
+            if (!uploadBtn && !downloadBtn && !confirmBtn && !removeBtn && !pageBtn) return
             const ui = getExcelUiFromDom()
             if (!ui) return
             if (uploadBtn) {
@@ -1582,6 +1692,26 @@
             if (confirmBtn) {
               evt.preventDefault()
               void confirmExcel(ui)
+              return
+            }
+            if (removeBtn) {
+              evt.preventDefault()
+              if (!state.confirmPayload || !Array.isArray(state.confirmPayload['数据'])) return
+              const idx = Number(removeBtn.getAttribute('data-remove-idx'))
+              if (!Number.isFinite(idx) || idx < 0 || idx >= state.confirmPayload['数据'].length) return
+              state.confirmPayload['数据'].splice(idx, 1)
+              renderPreview(ui.preview, state.confirmPayload)
+              updateConfirmEnabled(ui)
+              return
+            }
+            if (pageBtn) {
+              evt.preventDefault()
+              if (!state.confirmPayload || !Array.isArray(state.confirmPayload['数据'])) return
+              const act = String(pageBtn.getAttribute('data-page-act') || '')
+              const totalPages = clampPreviewPage(state.confirmPayload['数据'].length)
+              if (act === 'prev') state.previewPage = Math.max(1, state.previewPage - 1)
+              if (act === 'next') state.previewPage = Math.min(totalPages, state.previewPage + 1)
+              renderPreview(ui.preview, state.confirmPayload)
             }
           })
 
