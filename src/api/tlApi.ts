@@ -279,3 +279,116 @@ export async function fetchForecastDetail(
   }
   return unwrapList(data)
 }
+
+export async function tlPutJson(path: string, body: Record<string, unknown>): Promise<unknown> {
+  const url = path.startsWith('/') ? path : `/${path}`
+  const { res, data } = await fetchJson(url, {
+    method: 'PUT',
+    headers: {
+      ...authHeaders(),
+      'Content-Type': 'application/json',
+    } as HeadersInit,
+    body: JSON.stringify(body),
+  })
+  if (!res.ok) {
+    const bodyMsg =
+      typeof data === 'object' && data && 'message' in data
+        ? String((data as { message?: unknown }).message)
+        : ''
+    const detail = [bodyMsg, res.statusText].filter(Boolean).join(' — ') || `HTTP ${res.status}`
+    throw new Error(`${path} 返回 ${res.status}（${detail}）`)
+  }
+  return data
+}
+
+export async function tlDeleteJson(pathWithQuery: string): Promise<unknown> {
+  const url = pathWithQuery.startsWith('/') ? pathWithQuery : `/${pathWithQuery}`
+  const { res, data } = await fetchJson(url, { method: 'DELETE', headers: { ...authHeaders() } })
+  if (!res.ok) {
+    const bodyMsg =
+      typeof data === 'object' && data && 'message' in data
+        ? String((data as { message?: unknown }).message)
+        : ''
+    const detail = [bodyMsg, res.statusText].filter(Boolean).join(' — ') || `HTTP ${res.status}`
+    throw new Error(
+      `${pathWithQuery} 返回 ${res.status}（${detail}）。开发环境请检查 /tl 代理与上游服务。`,
+    )
+  }
+  return data
+}
+
+/**
+ * GET /tl/get_warehouse_links_outbound
+ * 先不带 page/size 请求（部分后端仅接受 源库房id，多余 query 会 422）；
+ * 再尝试 from_warehouse_id；仍失败再用分页拉全。
+ */
+export async function fetchTlWarehouseLinksOutbound(
+  fromWarehouseId: number,
+): Promise<Record<string, unknown>[]> {
+  const id = fromWarehouseId
+  const noPagePaths = [
+    `/tl/get_warehouse_links_outbound?${encodeURIComponent('源库房id')}=${id}`,
+    `/tl/get_warehouse_links_outbound?from_warehouse_id=${id}`,
+  ]
+  let last: unknown
+  for (const p of noPagePaths) {
+    try {
+      const raw = await tlGetJson(p)
+      assertTlBizCode200(raw, '库房出边')
+      return extractTlListPayload(raw).rows
+    } catch (e) {
+      last = e
+    }
+  }
+  for (const p of noPagePaths) {
+    try {
+      return await fetchTlListAll(p, '库房出边')
+    } catch (e) {
+      last = e
+    }
+  }
+  throw last instanceof Error ? last : new Error(String(last))
+}
+
+export async function putTlReplaceWarehouseLinksOutbound(
+  源库房id: number,
+  目标库房id列表: number[],
+): Promise<unknown> {
+  const raw = await tlPutJson('/tl/replace_warehouse_links_outbound', { 源库房id, 目标库房id列表 })
+  assertTlBizCode200(raw, '替换出边')
+  return raw
+}
+
+export async function postTlBindWarehouseLink(源库房id: number, 目标库房id: number): Promise<unknown> {
+  const raw = await tlPostJson('/tl/bind_warehouse_link', { 源库房id, 目标库房id })
+  assertTlBizCode200(raw, '绑定出边')
+  return raw
+}
+
+export async function postTlBatchBindWarehouseLinks(
+  源库房id: number,
+  目标库房id列表: number[],
+): Promise<unknown> {
+  const raw = await tlPostJson('/tl/batch_bind_warehouse_links', { 源库房id, 目标库房id列表 })
+  assertTlBizCode200(raw, '批量绑定出边')
+  return raw
+}
+
+export async function deleteTlUnbindWarehouseLink(
+  fromWarehouseId: number,
+  toWarehouseId: number,
+): Promise<unknown> {
+  const q = `from_warehouse_id=${fromWarehouseId}&to_warehouse_id=${toWarehouseId}`
+  const raw = await tlDeleteJson(`/tl/unbind_warehouse_link?${q}`)
+  assertTlBizCode200(raw, '解绑出边')
+  return raw
+}
+
+export async function postTlBatchUnbindWarehouseLinks(
+  源库房id: number,
+  目标库房id列表: number[],
+): Promise<unknown> {
+  const raw = await tlPostJson('/tl/batch_unbind_warehouse_links', { 源库房id, 目标库房id列表 })
+  assertTlBizCode200(raw, '批量解绑出边')
+  return raw
+}

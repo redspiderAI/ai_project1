@@ -3,7 +3,7 @@
     <header class="top-nav">
       <div class="top-nav-inner">
         <div class="title-group">
-          <h1 class="title">AI 综合业务门户</h1>
+          <h1 class="title">废铅蓄电池供应链成本优化服务系统</h1>
           <p class="subtitle">将业务页面统一到同一个网页入口</p>
         </div>
         <div class="module-tabs">
@@ -92,9 +92,11 @@
       <section v-else-if="activeSection === 'users'" class="panel inner-page">
         <UserManage />
       </section>
-      <section v-else-if="activeSection === 'warehouseDistance'" class="panel inner-page">
-        <WarehouseDistanceConfig />
-      </section>
+      <section
+        v-else-if="activeSection === 'warehouseDistance'"
+        class="panel inner-page warehouse-distance-placeholder"
+        aria-label="库房距离监测配置"
+      />
       <section v-else class="panel iframe-panel">
         <iframe
           class="embedded-frame"
@@ -147,7 +149,6 @@ import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
 import ElectronicMap from './pages/ElectronicMap.vue'
 import UserManage from './pages/UserManage.vue'
-import WarehouseDistanceConfig from './pages/WarehouseDistanceConfig.vue'
 import DetectApp from '../PD_max_fronted/src/App.vue'
 import { clearToken, getToken, login } from './api/authApi'
 
@@ -524,6 +525,10 @@ body {
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
+}
+
+.warehouse-distance-placeholder {
+  min-height: min(50vh, 400px);
 }
 
 .iframe-panel {
