@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, toRaw } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, toRaw } from 'vue'
 import {
   deleteV3Task,
   fetchDetectionHistory,
   getV3Result,
   getVisualizationBlob,
+  submitV1ImageDetectSync,
   submitV3Detect,
   type BboxXYXY,
   type V3ResultItem,
@@ -13,9 +14,10 @@ import {
   mapApiRecordToEntry,
   type DetectionHistoryEntry,
 } from './detectionHistory'
-const file = ref<File | null>(null)
-const batchInputRef = ref<HTMLInputElement | null>(null)
-const previewUrl = ref<string | null>(null)
+const files = ref<File[]>([])
+const filePreviews = ref<string[]>([])
+const selectedUploadIndex = ref(0)
+const uploadInputRef = ref<HTMLInputElement | null>(null)
 const historyPreviewUrl = ref<string | null>(null)
 const imgRef = ref<HTMLImageElement | null>(null)
 const imageNatural = ref({ w: 0, h: 0 })
@@ -29,14 +31,14 @@ const userBbox = ref<BboxXYXY | null>(null)
 const busy = ref(false)
 const pollStatus = ref('')
 const errorMsg = ref<string | null>(null)
-const dragOver = ref(false)
 
 const v3TaskId = ref<string | null>(null)
-const v3Payload = ref<{
+type V3ViewPayload = {
   result?: V3ResultItem | null
   multi?: V3ResultItem[]
   error_msg?: string | null
-} | null>(null)
+}
+const v3Payload = ref<V3ViewPayload | null>(null)
 
 const vizObjectUrl = ref<string | null>(null)
 const vizLoading = ref(false)
@@ -64,52 +66,63 @@ const viewingHistoryId = ref<string | null>(null)
 const detectAbort = ref<AbortController | null>(null)
 
 const activePreviewUrl = computed(() =>
-  viewingHistoryId.value ? historyPreviewUrl.value : previewUrl.value,
+  viewingHistoryId.value ? historyPreviewUrl.value : filePreviews.value[selectedUploadIndex.value] || null,
 )
 
-function assignFile(f: File | null) {
-  resetResults()
-  if (previewUrl.value) {
-    URL.revokeObjectURL(previewUrl.value)
-    previewUrl.value = null
+function revokeUploadPreviews() {
+  for (const u of filePreviews.value) {
+    if (u) URL.revokeObjectURL(u)
   }
+  filePreviews.value = []
+}
+
+function addFiles(next: File[]) {
+  if (!next.length) return
+  resetResults()
   userBbox.value = null
-  file.value = f
   imageNatural.value = { w: 0, h: 0 }
-  if (f) previewUrl.value = URL.createObjectURL(f)
+  const before = files.value.length
+  files.value = [...files.value, ...next]
+  filePreviews.value = [...filePreviews.value, ...next.map((f) => URL.createObjectURL(f))]
+  // 默认切到刚新增的第一张，方便连续多次上传后立即预览新图
+  selectedUploadIndex.value = before
+}
+
+function removePickedFile(index: number) {
+  if (index < 0 || index >= files.value.length) return
+  const url = filePreviews.value[index]
+  if (url) URL.revokeObjectURL(url)
+  files.value = files.value.filter((_, i) => i !== index)
+  filePreviews.value = filePreviews.value.filter((_, i) => i !== index)
+  if (!files.value.length) {
+    selectedUploadIndex.value = 0
+    imageNatural.value = { w: 0, h: 0 }
+    if (!viewingHistoryId.value) {
+      v3Payload.value = null
+      v3TaskId.value = null
+      if (vizObjectUrl.value) {
+        URL.revokeObjectURL(vizObjectUrl.value)
+        vizObjectUrl.value = null
+      }
+    }
+    return
+  }
+  if (selectedUploadIndex.value > index) {
+    selectedUploadIndex.value -= 1
+  } else if (selectedUploadIndex.value >= files.value.length) {
+    selectedUploadIndex.value = files.value.length - 1
+  }
 }
 
 function onFileChange(e: Event) {
   const input = e.target as HTMLInputElement
-  assignFile(input.files?.[0] ?? null)
-}
-
-function triggerBatchPick() {
-  batchInputRef.value?.click()
-}
-
-async function onBatchFileChange(e: Event) {
-  const input = e.target as HTMLInputElement
   const files = Array.from(input.files ?? []).filter((f) => /^image\//.test(f.type))
   input.value = ''
-  if (!files.length) return
-  await runV3Batch(files)
+  addFiles(files)
 }
 
-function onDragOver(e: DragEvent) {
-  e.preventDefault()
-  dragOver.value = true
-}
-
-function onDragLeave() {
-  dragOver.value = false
-}
-
-function onDrop(e: DragEvent) {
-  e.preventDefault()
-  dragOver.value = false
-  const f = e.dataTransfer?.files?.[0]
-  if (f && /^image\//.test(f.type)) assignFile(f)
+function triggerUploadPick() {
+  uploadInputRef.value?.click()
 }
 
 function resetResults() {
@@ -129,6 +142,18 @@ function resetResults() {
 
 async function waitMs(ms: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+async function waitWithCountdown(
+  totalSeconds: number,
+  render: (remainSeconds: number) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  for (let remain = totalSeconds; remain > 0; remain--) {
+    if (signal?.aborted) throw new DOMException('Aborted', 'AbortError')
+    render(remain)
+    await waitMs(1000)
+  }
 }
 
 function onImgLoad() {
@@ -449,39 +474,6 @@ function formatHistoryTime(iso: string) {
   }
 }
 
-async function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const id = window.setTimeout(resolve, ms)
-    if (!signal) return
-    const onAbort = () => {
-      window.clearTimeout(id)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }
-    if (signal.aborted) return onAbort()
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-async function waitForV3Completion(
-  taskId: string,
-  signal?: AbortSignal,
-): Promise<{
-  result?: V3ResultItem | null
-  multi_results?: V3ResultItem[]
-  error_msg?: string | null
-}> {
-  for (;;) {
-    const data = await getV3Result(taskId, { signal })
-    const st = (data.status || '').toUpperCase()
-    if (st === 'COMPLETED') return data
-    if (st === 'FAILED' || st === 'CANCELED') {
-      throw new Error(data.error_msg || `任务状态异常：${st || 'UNKNOWN'}`)
-    }
-    pollStatus.value = st === 'PROCESSING' ? '正在识别并定位可疑区域…' : '任务已提交，正在排队…'
-    await waitForPoll(st === 'PROCESSING' ? 1100 : 800, signal)
-  }
-}
-
 function truncateName(name: string, max = 18) {
   if (name.length <= max) return name
   return `${name.slice(0, max - 1)}…`
@@ -553,7 +545,6 @@ function clonePayloadForView(
 }
 
 async function applyHistoryEntry(entry: DetectionHistoryEntry) {
-  if (busy.value) return
   errorMsg.value = null
   pollStatus.value = ''
   viewingHistoryId.value = entry.id
@@ -592,8 +583,13 @@ onMounted(() => {
 })
 
 async function runV3() {
-  if (!file.value) {
-    errorMsg.value = '请先选择一张图片'
+  const picked = files.value
+  if (!picked.length) {
+    errorMsg.value = '请先上传图片'
+    return
+  }
+  if (picked.length > 1) {
+    await runV3Batch(picked)
     return
   }
   busy.value = true
@@ -610,42 +606,34 @@ async function runV3() {
   detectAbort.value = ac
   pollStatus.value = ''
   try {
-    /** 指定框模式传 bbox；默认不传，由后端自动 OCR 多区域检测 */
-    const bbox: BboxXYXY | null = v3SpecifyBbox.value
-      ? (userBbox.value ?? fullImageBbox())
-      : null
-    if (v3SpecifyBbox.value && !bbox) {
+    const one = picked[0]!
+    /** 单图按原同步接口：bbox 必传；不开启框选时传整图 */
+    const bbox: BboxXYXY | null = v3SpecifyBbox.value ? (userBbox.value ?? fullImageBbox()) : fullImageBbox()
+    if (!bbox) {
       errorMsg.value = v3SpecifyBbox.value
         ? '请框选区域或等待图片在预览区加载完成'
         : '请等待图片在预览区加载完成后再分析（需读取尺寸以提交整图区域）'
       return
     }
-    pollStatus.value = '正在提交任务…'
-    const submit = await submitV3Detect(file.value, bbox, {
-      signal: ac.signal,
-    })
-    const taskId = submit.task_id?.trim()
-    if (!taskId) {
-      throw new Error('服务端未返回任务 ID')
-    }
-    v3TaskId.value = taskId
-    pollStatus.value = '任务已提交，正在排队…'
-    const data = await waitForV3Completion(taskId, ac.signal)
-    if (data.error_msg?.trim() && !data.result && !(data.multi_results?.length)) {
+    pollStatus.value = '正在提交检测…'
+    const data = await submitV1ImageDetectSync(one, bbox, { signal: ac.signal })
+    if (data.error_msg?.trim() && !data.result && !(data.multi?.length)) {
       throw new Error(data.error_msg)
     }
-    if (!data.result && !(data.multi_results?.length)) {
+    if (!data.result && !(data.multi?.length)) {
       throw new Error(data.error_msg || '未返回检测结果')
     }
     v3Payload.value = {
       result: data.result ?? null,
-      multi: data.multi_results,
+      multi: data.multi,
       error_msg: data.error_msg ?? null,
     }
+    const taskId = data.task_id?.trim()
+    v3TaskId.value = taskId || null
     pollStatus.value = '分析完成'
     viewingHistoryId.value = null
     void refreshHistoryList()
-    if (v3TaskId.value) void loadViz(v3TaskId.value)
+    if (taskId) void loadViz(taskId)
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {
       pollStatus.value = '已取消'
@@ -680,18 +668,33 @@ async function runV3Batch(files: File[]) {
   let success = 0
   const failed: string[] = []
   let lastTaskId: string | null = null
-  let lastPayload: NonNullable<typeof v3Payload.value> | null = null
+  let lastPayload: V3ViewPayload | null = null
   try {
+    pollStatus.value = `预计等待约 ${files.length} 分钟（按每张约 1 分钟估算）`
+    await waitMs(300)
     for (let i = 0; i < files.length; i++) {
       const f = files[i]!
       pollStatus.value = `批量检测 ${i + 1}/${files.length}：提交任务…`
       const submit = await submitV3Detect(f, null, { signal: ac.signal })
       const taskId = submit.task_id?.trim()
       if (!taskId) throw new Error(`第 ${i + 1} 张未返回任务 ID`)
-      pollStatus.value = `批量检测 ${i + 1}/${files.length}：分析中…`
-      const data = await waitForV3Completion(taskId, ac.signal)
+      await waitWithCountdown(
+        90,
+        (remain) => {
+          const mm = Math.floor(remain / 60)
+          const ss = remain % 60
+          pollStatus.value = `批量检测 ${i + 1}/${files.length}：预计等待 ${mm}:${String(ss).padStart(2, '0')} 后查询结果`
+        },
+        ac.signal,
+      )
+      pollStatus.value = `批量检测 ${i + 1}/${files.length}：查询结果中…`
+      const data = await getV3Result(taskId, { signal: ac.signal })
       if (data.error_msg?.trim() && !data.result && !(data.multi_results?.length)) {
         failed.push(`${f.name}: ${data.error_msg}`)
+        continue
+      }
+      if ((data.status || '').toUpperCase() !== 'COMPLETED') {
+        failed.push(`${f.name}: 任务未完成（状态 ${data.status || 'unknown'}）`)
         continue
       }
       if (!data.result && !(data.multi_results?.length)) {
@@ -705,6 +708,8 @@ async function runV3Batch(files: File[]) {
         multi: data.multi_results,
         error_msg: data.error_msg ?? null,
       }
+      // 每张成功后立即刷新历史，便于检测过程中随时查看
+      void refreshHistoryList()
     }
     v3TaskId.value = lastTaskId
     if (lastPayload) v3Payload.value = lastPayload
@@ -777,7 +782,7 @@ async function cancelTask() {
 onUnmounted(() => {
   detectAbort.value?.abort()
   window.removeEventListener('keydown', onPreviewLightboxKeydown)
-  if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
+  revokeUploadPreviews()
   if (vizObjectUrl.value) URL.revokeObjectURL(vizObjectUrl.value)
 })
 </script>
@@ -812,37 +817,42 @@ onUnmounted(() => {
 
         <section class="card side-section">
           <h2 class="section-title">上传图片</h2>
-          <label
-            class="drop-zone"
-            :class="{ over: dragOver, hasFile: !!file }"
-            @dragover="onDragOver"
-            @dragleave="onDragLeave"
-            @drop="onDrop"
-          >
-            <input
-              class="sr-only"
-              type="file"
-              accept="image/*"
-              @change="onFileChange"
-            />
-            <template v-if="!file">
-              <span class="dz-icon" aria-hidden="true">＋</span>
-              <span class="dz-text">点击选择或拖拽图片到此处</span>
-              <span class="dz-hint">支持常见图片格式</span>
-            </template>
-            <template v-else>
-              <span class="dz-name">{{ file.name }}</span>
-              <span class="dz-change">点击更换图片</span>
-            </template>
-          </label>
           <input
-            ref="batchInputRef"
+            ref="uploadInputRef"
             class="sr-only"
             type="file"
             accept="image/*"
             multiple
-            @change="onBatchFileChange"
+            @change="onFileChange"
           />
+          <div class="upload-select-row">
+            <button type="button" class="btn btn-secondary upload-select-btn" :disabled="busy" @click="triggerUploadPick">
+              上传图片
+            </button>
+            <span class="upload-picked-summary">
+              {{ files.length ? `已选择 ${files.length} 张图片` : '支持一次选择一张或多张，后续可继续添加' }}
+            </span>
+          </div>
+          <div v-if="files.length > 1" class="upload-picked-list" aria-label="已选图片列表">
+            <button
+              v-for="(f, i) in files"
+              :key="`${f.name}-${i}`"
+              type="button"
+              class="upload-picked-item"
+              :class="{ active: i === selectedUploadIndex }"
+              :title="f.name"
+              @click="selectedUploadIndex = i"
+            >
+              <span class="upload-picked-item-name">{{ i + 1 }}. {{ f.name }}</span>
+              <span
+                class="upload-picked-item-remove"
+                role="button"
+                title="移除该图片"
+                @click.stop="removePickedFile(i)"
+                >×</span
+              >
+            </button>
+          </div>
 
           <div class="option-row">
             <label class="switch-label">
@@ -869,14 +879,11 @@ onUnmounted(() => {
           <button
             type="button"
             class="btn btn-primary"
-            :disabled="busy || !file"
+            :disabled="busy || !files.length"
             @click="runV3"
           >
             <span v-if="busy" class="btn-spinner" />
-            {{ busy ? '分析中…' : '开始分析' }}
-          </button>
-          <button type="button" class="btn btn-secondary" :disabled="busy" @click="triggerBatchPick">
-            批量检测
+            {{ busy ? '检测中…' : '提交检测' }}
           </button>
           <button
             v-if="busy"
@@ -905,14 +912,6 @@ onUnmounted(() => {
                 >历史记录预览</span
               >
               <span v-if="v3SpecifyBbox" class="workspace-tip">框选模式已开启</span>
-              <button
-                v-if="activePreviewUrl"
-                type="button"
-                class="btn-preview-zoom"
-                @click="openPreviewLightbox"
-              >
-                放大查看
-              </button>
             </div>
           </div>
 
@@ -1502,6 +1501,89 @@ onUnmounted(() => {
   margin-top: 0.5rem;
 }
 
+.upload-select-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.upload-select-btn {
+  width: 100%;
+}
+
+.upload-picked-summary {
+  font-size: 0.74rem;
+  line-height: 1.45;
+  color: var(--text-muted);
+}
+
+.upload-picked-list {
+  margin-top: 0.6rem;
+  max-height: 120px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: #f8fafc;
+  padding: 0.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.28rem;
+}
+
+.upload-picked-item {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--text);
+  text-align: left;
+  font-size: 0.75rem;
+  padding: 0.28rem 0.45rem;
+  line-height: 1.35;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  overflow: hidden;
+}
+
+.upload-picked-item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-picked-item-remove {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  line-height: 1;
+  color: #64748b;
+  background: transparent;
+}
+
+.upload-picked-item-remove:hover {
+  color: #dc2626;
+  background: #fee2e2;
+}
+
+.upload-picked-item:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+}
+
+.upload-picked-item.active {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e40af;
+}
+
 .option-row {
   margin-top: 1rem;
 }
@@ -1736,8 +1818,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.2rem;
-  padding: 0.45rem 0.5rem;
+  justify-content: center;
+  gap: 0.28rem;
+  padding: 0.52rem 0.5rem;
+  min-height: 86px;
+  line-height: 1.4;
   text-align: left;
   border: none;
   background: transparent;
@@ -1751,15 +1836,19 @@ onUnmounted(() => {
 
 .history-time {
   font-size: 0.68rem;
+  line-height: 1.3;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .history-file {
+  display: block;
   font-size: 0.78rem;
   font-weight: 600;
+  line-height: 1.35;
+  padding-top: 1px;
   color: var(--text);
-  max-width: 100%;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1941,10 +2030,9 @@ onUnmounted(() => {
   max-width: 100%;
   width: auto;
   height: auto;
-  max-height: min(58vh, 580px);
+  max-height: min(44vh, 420px);
   margin: 0 auto;
   object-fit: contain;
-  vertical-align: top;
 }
 
 .preview-img-zoomin {
