@@ -31,14 +31,14 @@ const userBbox = ref<BboxXYXY | null>(null)
 const busy = ref(false)
 const pollStatus = ref('')
 const errorMsg = ref<string | null>(null)
-const dragOver = ref(false)
 
 const v3TaskId = ref<string | null>(null)
-const v3Payload = ref<{
+type V3ViewPayload = {
   result?: V3ResultItem | null
   multi?: V3ResultItem[]
   error_msg?: string | null
-} | null>(null)
+}
+const v3Payload = ref<V3ViewPayload | null>(null)
 
 const vizObjectUrl = ref<string | null>(null)
 const vizLoading = ref(false)
@@ -123,22 +123,6 @@ function onFileChange(e: Event) {
 
 function triggerUploadPick() {
   uploadInputRef.value?.click()
-}
-
-function onDragOver(e: DragEvent) {
-  e.preventDefault()
-  dragOver.value = true
-}
-
-function onDragLeave() {
-  dragOver.value = false
-}
-
-function onDrop(e: DragEvent) {
-  e.preventDefault()
-  dragOver.value = false
-  const picked = Array.from(e.dataTransfer?.files ?? []).filter((f) => /^image\//.test(f.type))
-  if (picked.length) addFiles(picked)
 }
 
 function resetResults() {
@@ -490,39 +474,6 @@ function formatHistoryTime(iso: string) {
   }
 }
 
-async function waitForPoll(ms: number, signal?: AbortSignal): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    const id = window.setTimeout(resolve, ms)
-    if (!signal) return
-    const onAbort = () => {
-      window.clearTimeout(id)
-      reject(new DOMException('Aborted', 'AbortError'))
-    }
-    if (signal.aborted) return onAbort()
-    signal.addEventListener('abort', onAbort, { once: true })
-  })
-}
-
-async function waitForV3Completion(
-  taskId: string,
-  signal?: AbortSignal,
-): Promise<{
-  result?: V3ResultItem | null
-  multi_results?: V3ResultItem[]
-  error_msg?: string | null
-}> {
-  for (;;) {
-    const data = await getV3Result(taskId, { signal })
-    const st = (data.status || '').toUpperCase()
-    if (st === 'COMPLETED') return data
-    if (st === 'FAILED' || st === 'CANCELED') {
-      throw new Error(data.error_msg || `任务状态异常：${st || 'UNKNOWN'}`)
-    }
-    pollStatus.value = st === 'PROCESSING' ? '正在识别并定位可疑区域…' : '任务已提交，正在排队…'
-    await waitForPoll(st === 'PROCESSING' ? 1100 : 800, signal)
-  }
-}
-
 function truncateName(name: string, max = 18) {
   if (name.length <= max) return name
   return `${name.slice(0, max - 1)}…`
@@ -666,10 +617,10 @@ async function runV3() {
     }
     pollStatus.value = '正在提交检测…'
     const data = await submitV1ImageDetectSync(one, bbox, { signal: ac.signal })
-    if (data.error_msg?.trim() && !data.result && !(data.multi_results?.length)) {
+    if (data.error_msg?.trim() && !data.result && !(data.multi?.length)) {
       throw new Error(data.error_msg)
     }
-    if (!data.result && !(data.multi_results?.length)) {
+    if (!data.result && !(data.multi?.length)) {
       throw new Error(data.error_msg || '未返回检测结果')
     }
     v3Payload.value = {
@@ -717,7 +668,7 @@ async function runV3Batch(files: File[]) {
   let success = 0
   const failed: string[] = []
   let lastTaskId: string | null = null
-  let lastPayload: NonNullable<typeof v3Payload.value> | null = null
+  let lastPayload: V3ViewPayload | null = null
   try {
     pollStatus.value = `预计等待约 ${files.length} 分钟（按每张约 1 分钟估算）`
     await waitMs(300)
@@ -1867,8 +1818,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 0.2rem;
-  padding: 0.45rem 0.5rem;
+  justify-content: center;
+  gap: 0.28rem;
+  padding: 0.52rem 0.5rem;
+  min-height: 86px;
+  line-height: 1.4;
   text-align: left;
   border: none;
   background: transparent;
@@ -1882,15 +1836,19 @@ onUnmounted(() => {
 
 .history-time {
   font-size: 0.68rem;
+  line-height: 1.3;
   color: var(--text-muted);
   font-variant-numeric: tabular-nums;
 }
 
 .history-file {
+  display: block;
   font-size: 0.78rem;
   font-weight: 600;
+  line-height: 1.35;
+  padding-top: 1px;
   color: var(--text);
-  max-width: 100%;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -2075,7 +2033,6 @@ onUnmounted(() => {
   max-height: min(44vh, 420px);
   margin: 0 auto;
   object-fit: contain;
-  vertical-align: top;
 }
 
 .preview-img-zoomin {
