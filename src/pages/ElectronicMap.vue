@@ -862,6 +862,8 @@ const topTipLayerRef = shallowRef<L.LayerGroup | null>(null)
 const provinceOutlineLayerRef = shallowRef<L.GeoJSON | null>(null)
 /** 比价流向折线统一走 SVG，虚线 dash 动画与双层描边更稳定 */
 const flowPathSvgRendererRef = shallowRef<L.SVG | null>(null)
+const distanceLinePaneName = 'emap-distance-line-pane'
+const distanceLabelPaneName = 'emap-distance-label-pane'
 const loading = ref(false)
 /** 有本地缓存时的静默全量同步：不打断操作，仅地图角标提示 */
 const markersSyncing = ref(false)
@@ -1539,6 +1541,18 @@ function initMap() {
     maxZoom: 18,
     minZoom: 3,
   }).addTo(map)
+
+  // 距离监测线与距离标签：独立 pane，层级高于 marker，避免缩小时被仓库/冶炼厂图标遮挡
+  if (!map.getPane(distanceLinePaneName)) {
+    const p = map.createPane(distanceLinePaneName)
+    p.style.zIndex = '2000'
+    p.style.pointerEvents = 'none'
+  }
+  if (!map.getPane(distanceLabelPaneName)) {
+    const p = map.createPane(distanceLabelPaneName)
+    p.style.zIndex = '2010'
+    p.style.pointerEvents = 'none'
+  }
 
   const markerLayer = L.layerGroup().addTo(map)
   const flowLayer = L.layerGroup().addTo(map)
@@ -2714,8 +2728,8 @@ function linkOutboundTargetId(row: Record<string, unknown>): number | null {
 
 async function drawWarehouseBindingDistanceLines(warehouse: MapPoint) {
   const flowLayer = flowLayerRef.value
-  const flowRenderer = flowPathSvgRendererRef.value
   if (!flowLayer) throw new Error('地图流向图层未初始化，请刷新页面后重试')
+  const distanceRenderer = L.svg({ padding: 0.5, pane: distanceLinePaneName })
   const whId = warehouseNumericIdFromRow(warehouse.raw)
   if (whId == null) throw new Error('该库房缺少仓库 id，无法查询绑定')
   const links = await fetchTlWarehouseLinksOutbound(whId)
@@ -2727,7 +2741,7 @@ async function drawWarehouseBindingDistanceLines(warehouse: MapPoint) {
   if (!targetIds.size) {
     throw new Error('该库房暂无出库绑定（请先在「库房距离监测配置」中维护）')
   }
-  const rendererOpt = flowRenderer ? { renderer: flowRenderer } : {}
+  const rendererOpt = { renderer: distanceRenderer }
   let drawn = 0
   for (const tid of targetIds) {
     const tgt = findWarehousePointByNumericId(tid)
@@ -2738,13 +2752,14 @@ async function drawWarehouseBindingDistanceLines(warehouse: MapPoint) {
     ]
     L.polyline(latlngs, {
       color: '#c084fc',
-      weight: 3,
-      opacity: 0.92,
-      dashArray: '6 10',
+      weight: 6,
+      opacity: 0.98,
+      dashArray: '10 10',
       lineCap: 'round',
       lineJoin: 'round',
       className: 'emap-wh-bind-line',
       interactive: false,
+      pane: distanceLinePaneName,
       ...rendererOpt,
     }).addTo(flowLayer)
 
@@ -2769,6 +2784,7 @@ async function drawWarehouseBindingDistanceLines(warehouse: MapPoint) {
         iconAnchor: [36, 13],
       }),
       interactive: false,
+      pane: distanceLabelPaneName,
     }).addTo(flowLayer)
     drawn++
   }
@@ -5024,6 +5040,14 @@ onBeforeUnmount(() => {
 }
 .leaflet-container svg path.emap-flow-line--muted {
   animation: emap-flow 1.2s linear infinite;
+}
+
+/* 距离监测线：更显眼（加粗 + 高对比 + 光晕） */
+.leaflet-container svg path.emap-wh-bind-line {
+  stroke: #d8b4fe !important;
+  stroke-width: 6 !important;
+  stroke-opacity: 1 !important;
+  filter: drop-shadow(0 0 2px rgba(192, 132, 252, 0.9)) drop-shadow(0 0 6px rgba(168, 85, 247, 0.6));
 }
 
 .leaflet-container .leaflet-marker:has(.emap-flow-mover-wrap) {
