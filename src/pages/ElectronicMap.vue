@@ -45,7 +45,7 @@
                   废铅蓄电池供应链成本优化服务系统
                 </span>
                 <span class="emap-toolbar-hint text-muted small"
-                  >库房与冶炼厂均由接口加载。请先在下方选择<strong>比价类型</strong>并为品类填写<strong>吨数</strong>（至少一项
+                  >请先在下方选择<strong>比价类型</strong>并为品类填写<strong>吨数</strong>（至少一项
                   &gt; 0），再点击库房进行比价并绘制流向箭头。</span
                 >
               </div>
@@ -475,7 +475,7 @@
             ><span class="emap-legend-dot emap-legend-dot--wh"></span> 库房（随类型颜色）</span
           >
           <span class="emap-legend-item"
-            ><span class="emap-legend-tri"></span> 冶炼厂（接口）</span
+            ><span class="emap-legend-tri"></span> 冶炼厂</span
           >
           <div v-if="warehouseTypeStats.length" class="emap-legend-stats">
             <div class="emap-legend-stats-title">
