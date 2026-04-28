@@ -475,7 +475,7 @@
             ><span class="emap-legend-dot emap-legend-dot--wh"></span> 库房（随类型颜色）</span
           >
           <span class="emap-legend-item"
-            ><span class="emap-legend-tri"></span> 冶炼厂（接口）</span
+            ><span class="emap-legend-tri"></span> 冶炼厂</span
           >
           <div v-if="warehouseTypeStats.length" class="emap-legend-stats">
             <div class="emap-legend-stats-title">
@@ -2856,7 +2856,7 @@ function drawForecastTrendChart() {
   canvas.width = width
   canvas.height = height
 
-  const margin = { t: 20, r: 16, b: 44, l: 52 }
+  const margin = { t: 20, r: 16, b: 44, l: 64 }
   const W = width - margin.l - margin.r
   const H = height - margin.t - margin.b
   const n = dates.length
@@ -2914,6 +2914,26 @@ function drawForecastTrendChart() {
     ctx.fill()
   })
 
+  // 每个趋势点常显具体数值（与用户需求一致）
+  ctx.font = '11px system-ui, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'bottom'
+  values.forEach((v, i) => {
+    const x = margin.l + i * xStep
+    const y = margin.t + H - (v / maxY) * H
+    const label = Number.isFinite(v) ? v.toFixed(2) : '0.00'
+    const boxW = Math.max(28, label.length * 7 + 6)
+    const boxH = 16
+    const by = Math.max(margin.t + 2, y - 8 - boxH)
+    const bx = Math.max(margin.l, Math.min(margin.l + W - boxW, x - boxW / 2))
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.72)'
+    ctx.fillRect(bx, by, boxW, boxH)
+    ctx.fillStyle = '#e2e8f0'
+    ctx.fillText(label, x, by + boxH - 3)
+  })
+  ctx.textAlign = 'start'
+  ctx.textBaseline = 'alphabetic'
+
   const maxLabs = Math.max(2, Math.floor(W / 56))
   const labStep = Math.max(1, Math.ceil(n / maxLabs))
   ctx.fillStyle = '#94a3b8'
@@ -2925,7 +2945,8 @@ function drawForecastTrendChart() {
   })
 
   ctx.save()
-  ctx.translate(14, margin.t + H / 2)
+  // 纵轴标题左移，避免与刻度值重叠
+  ctx.translate(2, margin.t + H / 2)
   ctx.rotate(-Math.PI / 2)
   ctx.fillStyle = '#7dd3fc'
   ctx.font = '12px system-ui, sans-serif'

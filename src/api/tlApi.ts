@@ -392,3 +392,60 @@ export async function postTlBatchUnbindWarehouseLinks(
   assertTlBizCode200(raw, '批量解绑出边')
   return raw
 }
+
+function buildQueryString(params: Record<string, string | number | null | undefined>): string {
+  const sp = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null) continue
+    const sv = String(v).trim()
+    if (!sv) continue
+    sp.set(k, sv)
+  }
+  return sp.toString()
+}
+
+/**
+ * GET /tl/get_warehouse_links_inbound
+ * 返回指向该库房的全部入边。
+ */
+export async function fetchTlWarehouseLinksInbound(
+  warehouseId: number,
+): Promise<Record<string, unknown>[]> {
+  const q = buildQueryString({ warehouse_id: warehouseId })
+  const raw = await tlGetJson(`/tl/get_warehouse_links_inbound?${q}`)
+  assertTlBizCode200(raw, '库房入边')
+  return extractTlListPayload(raw).rows
+}
+
+export type TlWarehouseLinksListParams = {
+  page?: number
+  size?: number
+  warehouse_id?: number
+  from_warehouse_id?: number
+  to_warehouse_id?: number
+}
+
+/**
+ * GET /tl/get_warehouse_links_list
+ * 全部有向边分页列表，可按源/目标/任意库房过滤。
+ */
+export async function fetchTlWarehouseLinksList(
+  params: TlWarehouseLinksListParams = {},
+): Promise<{ rows: Record<string, unknown>[]; total: number }> {
+  const page = Number.isFinite(params.page) && (params.page as number) > 0 ? (params.page as number) : 1
+  const size = Number.isFinite(params.size) && (params.size as number) > 0 ? (params.size as number) : 50
+  const q = buildQueryString({
+    page,
+    size,
+    warehouse_id: params.warehouse_id,
+    from_warehouse_id: params.from_warehouse_id,
+    to_warehouse_id: params.to_warehouse_id,
+  })
+  const raw = await tlGetJson(`/tl/get_warehouse_links_list?${q}`)
+  assertTlBizCode200(raw, '库房关联列表')
+  const parsed = extractTlListPayload(raw)
+  return {
+    rows: parsed.rows,
+    total: parsed.total ?? parsed.rows.length,
+  }
+}

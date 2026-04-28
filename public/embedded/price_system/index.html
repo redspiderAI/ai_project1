@@ -1210,5 +1210,436 @@
         }
       })()
     </script>
+    <style>
+      .excel-import-card {
+        border: 1px solid #d8e2ef;
+        border-radius: 12px;
+        padding: 12px 14px;
+        margin: 10px 0 14px;
+        background: #f9fcff;
+      }
+      .excel-import-card h4 {
+        margin: 0 0 6px;
+        font-size: 15px;
+        font-weight: 700;
+        color: #1d2939;
+      }
+      .excel-import-card .excel-tip {
+        margin: 0 0 10px;
+        color: #667085;
+        font-size: 12px;
+      }
+      .excel-import-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+      .excel-import-msg {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #0f766e;
+      }
+      .excel-import-err {
+        margin-top: 8px;
+        font-size: 12px;
+        color: #b42318;
+        white-space: pre-wrap;
+      }
+      .excel-preview-wrap {
+        margin-top: 10px;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        background: #fff;
+        overflow: hidden;
+      }
+      .excel-preview-head {
+        padding: 8px 10px;
+        border-bottom: 1px solid #e5e7eb;
+        background: #f8fafc;
+        font-size: 12px;
+        color: #475467;
+      }
+      .excel-preview-scroll {
+        max-height: 280px;
+        overflow: auto;
+      }
+      .excel-preview-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      .excel-preview-table th,
+      .excel-preview-table td {
+        border: 1px solid #eef2f7;
+        font-size: 12px;
+        padding: 6px 8px;
+        text-align: left;
+        vertical-align: top;
+        white-space: nowrap;
+      }
+    </style>
+    <script>
+      ;(() => {
+        const state = {
+          mounted: false,
+          uploadResp: null,
+          confirmPayload: null,
+        }
+        const excelDelegateState = { bound: false }
+
+        function tokenHeaders() {
+          try {
+            const t = localStorage.getItem('api_token')
+            return t ? { Authorization: `Bearer ${t}` } : {}
+          } catch (_) {
+            return {}
+          }
+        }
+
+        function esc(v) {
+          return String(v == null ? '' : v)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+        }
+
+        function todayYmd() {
+          return new Date().toISOString().slice(0, 10)
+        }
+
+        function firstArray(...vals) {
+          for (const v of vals) if (Array.isArray(v)) return v
+          return []
+        }
+
+        function pickPayload(resp) {
+          const root = resp && typeof resp === 'object' ? resp : {}
+          const data = root.data && typeof root.data === 'object' ? root.data : {}
+          const details = data.details && typeof data.details === 'object' ? data.details : {}
+          const fullData =
+            details.full_data && typeof details.full_data === 'object'
+              ? details.full_data
+              : data.full_data && typeof data.full_data === 'object'
+                ? data.full_data
+                : {}
+          const items = firstArray(details.items, data.items, root.items, data['数据'], root['数据'])
+          const quoteDate =
+            (data.suggested_quote_date && String(data.suggested_quote_date).trim()) ||
+            (fullData.quote_date && String(fullData.quote_date).trim()) ||
+            todayYmd()
+
+          return {
+            '报价日期': quoteDate,
+            full_data: fullData,
+            '数据': items,
+          }
+        }
+
+        function renderPreview(container, payload) {
+          const rows = Array.isArray(payload['数据']) ? payload['数据'] : []
+          const show = rows.slice(0, 60)
+          const table = show.length
+            ? `
+            <table class="excel-preview-table">
+              <thead>
+                <tr>
+                  <th>冶炼厂</th>
+                  <th>品类</th>
+                  <th>价格</th>
+                  <th>口径</th>
+                  <th>备注</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${show
+                  .map((r) => {
+                    const o = r && typeof r === 'object' ? r : {}
+                    return `<tr>
+                      <td>${esc(o['冶炼厂名'])}</td>
+                      <td>${esc(o['品类名'])}</td>
+                      <td>${esc(o['价格'])}</td>
+                      <td>${esc(o['价格口径'])}</td>
+                      <td>${esc(o['备注'])}</td>
+                    </tr>`
+                  })
+                  .join('')}
+              </tbody>
+            </table>`
+            : '<div style="padding:10px;font-size:12px;color:#64748b;">未解析到可确认的报价明细。</div>'
+
+          container.innerHTML = `
+            <div class="excel-preview-wrap">
+              <div class="excel-preview-head">
+                报价日期：${esc(payload['报价日期'])} ｜ 明细条数：${rows.length}
+                ${rows.length > show.length ? `｜ 预览前 ${show.length} 条` : ''}
+              </div>
+              <div class="excel-preview-scroll">${table}</div>
+            </div>
+          `
+        }
+
+        async function uploadExcel(file, ui) {
+          ui.msg.textContent = ''
+          ui.err.textContent = ''
+          const fd = new FormData()
+          fd.append('file', file)
+          ui.uploadBtn.disabled = true
+          ui.uploadBtn.textContent = '上传中...'
+          ui.confirmBtn.disabled = true
+          try {
+            const res = await fetch('/tl/upload_price_table_excel', {
+              method: 'POST',
+              headers: { ...tokenHeaders() },
+              credentials: 'same-origin',
+              body: fd,
+            })
+            const text = await res.text()
+            let json = {}
+            try {
+              json = text ? JSON.parse(text) : {}
+            } catch (_) {
+              throw new Error('上传返回不是 JSON')
+            }
+            if (!res.ok) {
+              const msg = (json && (json.message || json.detail)) || `HTTP ${res.status}`
+              throw new Error(String(msg))
+            }
+            state.uploadResp = json
+            state.confirmPayload = pickPayload(json)
+            renderPreview(ui.preview, state.confirmPayload)
+            ui.msg.textContent = `Excel 上传成功，已生成待确认数据。`
+            ui.confirmBtn.disabled = !Array.isArray(state.confirmPayload['数据']) || state.confirmPayload['数据'].length === 0
+          } catch (e) {
+            ui.err.textContent = e instanceof Error ? e.message : String(e)
+          } finally {
+            ui.uploadBtn.disabled = false
+            ui.uploadBtn.textContent = '上传Excel报价表'
+          }
+        }
+
+        async function confirmExcel(ui) {
+          if (!state.confirmPayload) return
+          ui.msg.textContent = ''
+          ui.err.textContent = ''
+          ui.confirmBtn.disabled = true
+          ui.confirmBtn.textContent = '确认中...'
+          try {
+            const res = await fetch('/tl/confirm_price_table', {
+              method: 'POST',
+              headers: {
+                ...tokenHeaders(),
+                'Content-Type': 'application/json',
+              },
+              credentials: 'same-origin',
+              body: JSON.stringify(state.confirmPayload),
+            })
+            const text = await res.text()
+            let json = {}
+            try {
+              json = text ? JSON.parse(text) : {}
+            } catch (_) {}
+            if (!res.ok) {
+              const msg = (json && (json.message || json.detail)) || `HTTP ${res.status}`
+              throw new Error(String(msg))
+            }
+            ui.msg.textContent = '确认入库成功。'
+          } catch (e) {
+            ui.err.textContent = e instanceof Error ? e.message : String(e)
+          } finally {
+            ui.confirmBtn.disabled = false
+            ui.confirmBtn.textContent = '确认导入'
+          }
+        }
+
+        async function downloadTemplate(ui) {
+          ui.msg.textContent = ''
+          ui.err.textContent = ''
+          ui.downloadBtn.disabled = true
+          ui.downloadBtn.textContent = '下载中...'
+          try {
+            const href = `/tl/download_quote_list_template_excel?t=${Date.now()}`
+            let downloaded = false
+
+            try {
+              const res = await fetch(href, {
+                method: 'GET',
+                headers: { ...tokenHeaders() },
+                credentials: 'same-origin',
+              })
+              if (res.ok) {
+                const blob = await res.blob()
+                if (blob && blob.size > 0) {
+                  const cd = String(res.headers.get('content-disposition') || '')
+                  let filename = `报价列表导入模板_${todayYmd()}.xlsx`
+                  const m1 = cd.match(/filename\*=UTF-8''([^;]+)/i)
+                  const m2 = cd.match(/filename="?([^";]+)"?/i)
+                  const rawName = (m1 && m1[1]) || (m2 && m2[1]) || ''
+                  if (rawName) {
+                    try {
+                      filename = decodeURIComponent(rawName)
+                    } catch (_) {
+                      filename = rawName
+                    }
+                  }
+                  const url = URL.createObjectURL(blob)
+                  const a = document.createElement('a')
+                  a.href = url
+                  a.download = filename
+                  document.body.appendChild(a)
+                  a.click()
+                  a.remove()
+                  URL.revokeObjectURL(url)
+                  downloaded = true
+                }
+              }
+            } catch (_) {
+              // ignore and fallback to direct navigation below
+            }
+
+            if (!downloaded) {
+              // Fallback: 与 Swagger 的 Download file 行为一致，直接打开下载接口
+              const win = window.open(href, '_blank')
+              if (!win) window.location.href = href
+            }
+            ui.msg.textContent = '模板下载成功。'
+          } catch (e) {
+            ui.err.textContent = e instanceof Error ? e.message : String(e)
+          } finally {
+            ui.downloadBtn.disabled = false
+            ui.downloadBtn.textContent = '下载模板'
+          }
+        }
+
+        function bindExcelCard(card) {
+          if (!card || card.dataset.bound === '1') return true
+          const ui = {
+            fileInput: card.querySelector('#excel-import-input'),
+            uploadBtn: card.querySelector('#excel-import-upload-btn'),
+            downloadBtn: card.querySelector('#excel-import-download-btn'),
+            confirmBtn: card.querySelector('#excel-import-confirm-btn'),
+            msg: card.querySelector('#excel-import-msg'),
+            err: card.querySelector('#excel-import-err'),
+            preview: card.querySelector('#excel-import-preview'),
+          }
+          if (!ui.fileInput || !ui.uploadBtn || !ui.downloadBtn || !ui.confirmBtn || !ui.msg || !ui.err || !ui.preview) {
+            return false
+          }
+          ui.uploadBtn.addEventListener('click', () => ui.fileInput.click())
+          ui.fileInput.addEventListener('change', () => {
+            const f = ui.fileInput.files && ui.fileInput.files[0]
+            if (!f) return
+            uploadExcel(f, ui)
+            ui.fileInput.value = ''
+          })
+          ui.downloadBtn.addEventListener('click', () => downloadTemplate(ui))
+          ui.confirmBtn.addEventListener('click', () => confirmExcel(ui))
+          card.dataset.bound = '1'
+          return true
+        }
+
+        function getExcelUiFromDom() {
+          const card = document.getElementById('excel-import-card')
+          if (!card) return null
+          const ui = {
+            fileInput: card.querySelector('#excel-import-input'),
+            uploadBtn: card.querySelector('#excel-import-upload-btn'),
+            downloadBtn: card.querySelector('#excel-import-download-btn'),
+            confirmBtn: card.querySelector('#excel-import-confirm-btn'),
+            msg: card.querySelector('#excel-import-msg'),
+            err: card.querySelector('#excel-import-err'),
+            preview: card.querySelector('#excel-import-preview'),
+          }
+          if (!ui.fileInput || !ui.uploadBtn || !ui.downloadBtn || !ui.confirmBtn || !ui.msg || !ui.err || !ui.preview) {
+            return null
+          }
+          return ui
+        }
+
+        function bindExcelDelegatesOnce() {
+          if (excelDelegateState.bound) return
+          excelDelegateState.bound = true
+
+          document.addEventListener('click', (evt) => {
+            const target = evt.target
+            if (!target || !target.closest) return
+            const uploadBtn = target.closest('#excel-import-upload-btn')
+            const downloadBtn = target.closest('#excel-import-download-btn')
+            const confirmBtn = target.closest('#excel-import-confirm-btn')
+            if (!uploadBtn && !downloadBtn && !confirmBtn) return
+            const ui = getExcelUiFromDom()
+            if (!ui) return
+            if (uploadBtn) {
+              evt.preventDefault()
+              ui.fileInput.click()
+              return
+            }
+            if (downloadBtn) {
+              evt.preventDefault()
+              void downloadTemplate(ui)
+              return
+            }
+            if (confirmBtn) {
+              evt.preventDefault()
+              void confirmExcel(ui)
+            }
+          })
+
+          document.addEventListener('change', (evt) => {
+            const target = evt.target
+            if (!(target instanceof HTMLInputElement)) return
+            if (target.id !== 'excel-import-input') return
+            const ui = getExcelUiFromDom()
+            if (!ui) return
+            const f = target.files && target.files[0]
+            if (!f) return
+            void uploadExcel(f, ui)
+            target.value = ''
+          })
+        }
+
+        function mountIntoUploadPage() {
+          const page = document.querySelector('.upload-page .page-header')
+          if (!page) return false
+          const exists = document.getElementById('excel-import-card')
+          if (exists) return bindExcelCard(exists)
+
+          const card = document.createElement('div')
+          card.id = 'excel-import-card'
+          card.className = 'excel-import-card'
+          card.innerHTML = `
+            <h4>Excel 报价导入</h4>
+            <p class="excel-tip">上传一个 excel（.xlsx / .xls）即可，再点击确认导入。</p>
+            <div class="excel-import-actions">
+              <input id="excel-import-input" type="file" accept=".xlsx,.xls" style="display:none" />
+              <button id="excel-import-upload-btn" type="button" class="btn btn-primary">上传Excel报价表</button>
+              <button id="excel-import-download-btn" type="button" class="btn btn-outline-secondary">下载模板</button>
+              <button id="excel-import-confirm-btn" type="button" class="btn btn-outline-primary" disabled>确认导入</button>
+            </div>
+            <p id="excel-import-msg" class="excel-import-msg"></p>
+            <p id="excel-import-err" class="excel-import-err"></p>
+            <div id="excel-import-preview"></div>
+          `
+          page.parentElement.insertBefore(card, page.nextSibling)
+          return bindExcelCard(card)
+        }
+
+        function start() {
+          bindExcelDelegatesOnce()
+          if (mountIntoUploadPage()) return
+          const mo = new MutationObserver(() => {
+            if (mountIntoUploadPage()) mo.disconnect()
+          })
+          mo.observe(document.body, { childList: true, subtree: true })
+          setTimeout(() => mo.disconnect(), 20000)
+        }
+
+        if (document.readyState === 'loading') {
+          document.addEventListener('DOMContentLoaded', start)
+        } else {
+          start()
+        }
+      })()
+    </script>
 </body>
 </html>

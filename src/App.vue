@@ -92,11 +92,9 @@
       <section v-else-if="activeSection === 'users'" class="panel inner-page">
         <UserManage />
       </section>
-      <section
-        v-else-if="activeSection === 'warehouseDistance'"
-        class="panel inner-page warehouse-distance-placeholder"
-        aria-label="库房距离监测配置"
-      />
+      <section v-else-if="activeSection === 'warehouseDistance'" class="panel inner-page">
+        <WarehouseDistanceConfig />
+      </section>
       <section v-else class="panel iframe-panel">
         <iframe
           class="embedded-frame"
@@ -149,6 +147,7 @@ import HistoryQuery from './pages/HistoryQuery.vue'
 import PurchaseQuantity from './pages/PurchaseQuantity.vue'
 import ElectronicMap from './pages/ElectronicMap.vue'
 import UserManage from './pages/UserManage.vue'
+import WarehouseDistanceConfig from './components/WarehouseDistanceConfig.vue'
 import DetectApp from '../PD_max_fronted/src/App.vue'
 import { clearToken, getToken, login } from './api/authApi'
 
@@ -525,10 +524,6 @@ body {
   max-width: 1400px;
   margin: 0 auto;
   padding: 20px;
-}
-
-.warehouse-distance-placeholder {
-  min-height: min(50vh, 400px);
 }
 
 .iframe-panel {
