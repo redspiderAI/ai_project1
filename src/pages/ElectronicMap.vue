@@ -286,7 +286,7 @@
           :disabled="forecastLoading"
           @click="runForecastForWarehouse(selectedWarehouse)"
         >
-          {{ forecastLoading ? '预测中…' : '预测送货量' }}
+          {{ forecastLoading ? '预测中…' : '重新预测送货量' }}
         </button>
         <button
           v-if="comparisonRanks.length"
@@ -316,22 +316,30 @@
           }}
         </button>
       </div>
-      <div v-if="comparisonModalVisible" class="emap-cmp-panel" :class="{ 'emap-cmp-panel--collapsed': comparisonPanelCollapsed }">
+      <div v-if="comparisonModalVisible" class="emap-cmp-panel">
         <div class="emap-cmp-panel-head">
           <h4 class="emap-cmp-panel-title">{{ comparisonModalTitle }}</h4>
           <div class="emap-cmp-panel-head-actions">
             <button
               type="button"
               class="emap-cmp-panel-toggle"
-              :title="comparisonPanelCollapsed ? '展开' : '收起'"
-              @click="comparisonPanelCollapsed = !comparisonPanelCollapsed"
+              :title="comparisonSectionCollapsed ? '展开比价' : '收起比价'"
+              @click="comparisonSectionCollapsed = !comparisonSectionCollapsed"
             >
-              {{ comparisonPanelCollapsed ? '展开' : '收起' }}
+              {{ comparisonSectionCollapsed ? '展开比价' : '收起比价' }}
+            </button>
+            <button
+              type="button"
+              class="emap-cmp-panel-toggle"
+              :title="forecastSectionCollapsed ? '展开预测' : '收起预测'"
+              @click="forecastSectionCollapsed = !forecastSectionCollapsed"
+            >
+              {{ forecastSectionCollapsed ? '展开预测' : '收起预测' }}
             </button>
             <button type="button" class="emap-cmp-panel-close" @click="closeComparisonModal">&times;</button>
           </div>
         </div>
-        <div v-if="!comparisonPanelCollapsed" class="emap-cmp-summary">
+        <div v-if="!comparisonSectionCollapsed" class="emap-cmp-summary">
           <div class="emap-cmp-summary-card">
             <div class="emap-cmp-summary-label">最优方案</div>
             <div class="emap-cmp-summary-value">{{ comparisonSummary.bestSmelter || '-' }}</div>
@@ -349,7 +357,7 @@
             <div class="emap-cmp-summary-value">¥ {{ formatNum(comparisonSummary.marginToSecond) }}</div>
           </div>
         </div>
-        <div v-if="!comparisonPanelCollapsed" class="emap-cmp-table-wrap">
+        <div v-if="!comparisonSectionCollapsed" class="emap-cmp-table-wrap">
           <table class="table table-sm table-striped align-middle mb-0 emap-cmp-table">
             <thead>
               <tr>
@@ -490,6 +498,41 @@
             </tbody>
           </table>
         </div>
+        <div v-if="!forecastSectionCollapsed" class="emap-cmp-forecast">
+          <div class="emap-cmp-forecast-head">
+            <div class="emap-cmp-forecast-title">送货量预测</div>
+            <div class="emap-cmp-forecast-actions">
+              <button
+                type="button"
+                class="btn btn-sm btn-outline-success"
+                :disabled="forecastLoading || !selectedWarehouse"
+                @click="selectedWarehouse && runForecastForWarehouse(selectedWarehouse)"
+              >
+                {{ forecastLoading ? '预测中…' : '重新预测' }}
+              </button>
+              <button
+                type="button"
+                class="btn btn-sm btn-secondary"
+                :disabled="!forecastModalDates.length"
+                @click="exportForecastTrendCsv"
+              >
+                导出趋势CSV
+              </button>
+            </div>
+          </div>
+          <p v-if="forecastError" class="emap-side-error mb-2">{{ forecastError }}</p>
+          <div class="emap-fc-chart-wrap">
+            <p v-if="forecastLoading" class="emap-fc-chart-empty text-muted mb-0">预测中，请稍候…</p>
+            <canvas v-else-if="forecastModalDates.length" ref="forecastTrendCanvasRef"></canvas>
+            <p v-else class="emap-fc-chart-empty text-muted mb-0">当前库房暂无可用预测明细。</p>
+          </div>
+          <div v-if="forecastModalMeta" class="emap-fc-chart-meta">
+            <p><strong>仓库：</strong>{{ forecastModalMeta.warehouse }}</p>
+            <p><strong>大区经理：</strong>{{ forecastModalMeta.regional_manager }}</p>
+            <p><strong>品类：</strong>{{ forecastModalMeta.product_variety }}</p>
+            <p v-if="forecastModalMeta.smelter"><strong>冶炼厂：</strong>{{ forecastModalMeta.smelter }}</p>
+          </div>
+        </div>
       </div>
       <div class="emap-map-corner">
         <div class="emap-legend">
@@ -564,34 +607,6 @@
       </div>
     </div>
     <div v-if="loadError" class="alert emap-alert-dashboard m-3 mb-0" role="alert">{{ loadError }}</div>
-
-    <!-- 与「送货量预测」页一致的趋势弹窗：折线图 + 仓库 / 大区经理 / 品类 / 冶炼厂 -->
-    <div v-if="forecastModalVisible" class="emap-fc-modal" @click.self="closeForecastModal">
-      <div class="emap-fc-modal-content emap-fc-modal-chart">
-        <div class="emap-fc-modal-header">
-          <h3>{{ forecastModalTitle }}</h3>
-          <button type="button" class="emap-fc-close-btn" @click="closeForecastModal">&times;</button>
-        </div>
-        <div class="emap-fc-modal-body">
-          <div class="emap-fc-chart-wrap">
-            <canvas v-if="forecastModalDates.length" ref="forecastTrendCanvasRef"></canvas>
-            <p v-else class="emap-fc-chart-empty text-muted mb-0">当前库房暂无可用预测明细。</p>
-          </div>
-          <div class="emap-fc-chart-meta">
-            <p><strong>仓库：</strong>{{ forecastModalMeta?.warehouse }}</p>
-            <p><strong>大区经理：</strong>{{ forecastModalMeta?.regional_manager }}</p>
-            <p><strong>品类：</strong>{{ forecastModalMeta?.product_variety }}</p>
-            <p v-if="forecastModalMeta?.smelter"><strong>冶炼厂：</strong>{{ forecastModalMeta.smelter }}</p>
-          </div>
-          <div class="emap-fc-chart-actions">
-            <button type="button" class="btn btn-sm btn-secondary" @click="exportForecastTrendCsv">导出趋势CSV</button>
-          </div>
-        </div>
-        <div class="emap-fc-modal-footer">
-          <button type="button" class="btn btn-secondary" @click="closeForecastModal">关闭</button>
-        </div>
-      </div>
-    </div>
 
     <!-- 比价表：单元格过长省略，点击看全文（类 Excel） -->
     <div
@@ -884,14 +899,13 @@ const warehouseDistanceLoading = ref(false)
 const forecastLoading = ref(false)
 const compareError = ref('')
 const forecastError = ref('')
-const forecastModalVisible = ref(false)
-const forecastModalTitle = ref('')
 const forecastModalMeta = ref<ForecastChartMeta | null>(null)
 const forecastModalDates = ref<string[]>([])
 const forecastModalValues = ref<number[]>([])
 const comparisonModalVisible = ref(false)
 const comparisonModalTitle = ref('比价结果')
-const comparisonPanelCollapsed = ref(false)
+const comparisonSectionCollapsed = ref(false)
+const forecastSectionCollapsed = ref(false)
 /** 比价表单元格点击后展示的完整文案（列标题 + 正文） */
 const comparisonCellDetail = ref<{ label: string; text: string } | null>(null)
 const forecastTrendCanvasRef = ref<HTMLCanvasElement | null>(null)
@@ -1406,8 +1420,7 @@ function focusMapPointFromSearch(p: MapPoint) {
   if (p.kind === 'warehouse') {
     selectedWarehouse.value = p
     forecastError.value = ''
-    closeForecastModal()
-    void runComparisonForWarehouse(p)
+    void runComparisonAndForecastForWarehouse(p)
   }
   emapSearchFeedback.value =
     nMatch > 1 ? `已选择：${p.title}（${nMatch} 处名称匹配，可继续输入缩小）` : `已定位：${p.title}`
@@ -1854,12 +1867,11 @@ function renderMarkers(points: MapPoint[]) {
       marker.on('click', () => {
         selectedWarehouse.value = p
         forecastError.value = ''
-        closeForecastModal()
         if (enableAutoZoomOnPointClick.value) {
           const zoom = Math.max(map.getZoom(), 9)
           map.setView([p.lat, p.lng], zoom, { animate: true })
         }
-        void runComparisonForWarehouse(p)
+        void runComparisonAndForecastForWarehouse(p)
       })
     } else {
       marker.on('click', () => {
@@ -2985,12 +2997,10 @@ async function fetchForecastDetailPaged(warehouses: string[]): Promise<Record<st
   return all
 }
 
-function closeForecastModal() {
-  forecastModalVisible.value = false
+function resetForecastData() {
   forecastModalMeta.value = null
   forecastModalDates.value = []
   forecastModalValues.value = []
-  forecastModalTitle.value = ''
 }
 
 const comparisonSummary = computed(() => {
@@ -3011,13 +3021,15 @@ const comparisonSummary = computed(() => {
 function openComparisonModal() {
   const wh = selectedWarehouse.value?.title?.trim()
   comparisonModalTitle.value = wh ? `比价结果：${wh}` : '比价结果'
-  comparisonPanelCollapsed.value = false
+  comparisonSectionCollapsed.value = false
+  forecastSectionCollapsed.value = false
   comparisonModalVisible.value = true
 }
 
 function closeComparisonModal() {
   comparisonModalVisible.value = false
-  comparisonPanelCollapsed.value = false
+  comparisonSectionCollapsed.value = false
+  forecastSectionCollapsed.value = false
   comparisonCellDetail.value = null
 }
 
@@ -3125,14 +3137,10 @@ function drawForecastTrendChart() {
     ctx.fillText(label, x - 16, margin.t + H + 28)
   })
 
-  ctx.save()
-  // 纵轴标题左移，避免与刻度值重叠
-  ctx.translate(2, margin.t + H / 2)
-  ctx.rotate(-Math.PI / 2)
+  // 左上角横排显示纵轴含义，避免竖排遮挡
   ctx.fillStyle = '#7dd3fc'
   ctx.font = '12px system-ui, sans-serif'
-  ctx.fillText('预测重量(吨)', -36, 0)
-  ctx.restore()
+  ctx.fillText('重量（吨）', margin.l, margin.t - 6)
 
   ctx.fillStyle = '#7dd3fc'
   ctx.font = '12px system-ui, sans-serif'
@@ -3173,7 +3181,7 @@ function exportForecastTrendCsv() {
   URL.revokeObjectURL(link.href)
 }
 
-watch(forecastModalVisible, (v) => {
+watch(comparisonModalVisible, (v) => {
   if (v) {
     nextTick(() => {
       drawForecastTrendChart()
@@ -3186,8 +3194,8 @@ watch(forecastModalVisible, (v) => {
   }
 })
 
-watch([forecastModalDates, forecastModalValues], () => {
-  if (forecastModalVisible.value && forecastModalDates.value.length > 0) {
+watch([forecastModalDates, forecastModalValues, forecastSectionCollapsed], () => {
+  if (comparisonModalVisible.value && !forecastSectionCollapsed.value && forecastModalDates.value.length > 0) {
     nextTick(() => drawForecastTrendChart())
   }
 })
@@ -3226,16 +3234,27 @@ async function runForecastForWarehouse(warehouse: MapPoint) {
       product_variety: uniqSortedJoinZh(vars),
       smelter: uniqSortedJoinZhOptional(sms),
     }
-    forecastModalTitle.value = `预测趋势：${whTitle}`
     forecastModalDates.value = dates
     forecastModalValues.value = vals
-    forecastModalVisible.value = true
+    if (comparisonModalVisible.value && !forecastSectionCollapsed.value) {
+      nextTick(() => drawForecastTrendChart())
+    }
   } catch (e) {
-    closeForecastModal()
+    resetForecastData()
     forecastError.value = parseForecastDetailError(e)
   } finally {
     forecastLoading.value = false
   }
+}
+
+async function runComparisonAndForecastForWarehouse(
+  warehouse: MapPoint,
+  options?: RunComparisonOptions,
+) {
+  await Promise.allSettled([
+    runComparisonForWarehouse(warehouse, options),
+    runForecastForWarehouse(warehouse),
+  ])
 }
 
 function reviveMapPointFromCache(p: unknown): MapPoint | null {
@@ -4160,22 +4179,12 @@ onBeforeUnmount(() => {
   color: #e2e8f0;
 }
 
-.emap-cmp-panel--collapsed {
-  width: min(420px, calc(100% - 24px));
-  max-height: none;
-  overflow: hidden;
-}
-
 .emap-cmp-panel-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   margin-bottom: 10px;
-}
-
-.emap-cmp-panel--collapsed .emap-cmp-panel-head {
-  margin-bottom: 0;
 }
 
 .emap-cmp-panel-title {
@@ -4257,11 +4266,37 @@ onBeforeUnmount(() => {
 }
 
 .emap-cmp-table-wrap {
-  max-height: 360px;
-  overflow-x: hidden;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   border: 1px solid rgba(34, 211, 238, 0.22);
   border-radius: 8px;
+}
+
+.emap-cmp-forecast {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(34, 211, 238, 0.24);
+  border-radius: 10px;
+  background: rgba(8, 26, 52, 0.56);
+}
+
+.emap-cmp-forecast-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.emap-cmp-forecast-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #7dd3fc;
+}
+
+.emap-cmp-forecast-actions {
+  display: flex;
+  gap: 8px;
 }
 
 /* 固定列宽：厂名省略，四列金额完整单行；容器不横向滚动 */
