@@ -4,7 +4,6 @@
       <div class="top-nav-inner">
         <div class="title-group">
           <h1 class="title">废铅蓄电池供应链成本优化服务系统</h1>
-          <p class="subtitle">将业务页面统一到同一个网页入口</p>
         </div>
         <div class="module-tabs">
           <button
