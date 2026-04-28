@@ -374,7 +374,7 @@
             <tbody>
               <tr v-if="!comparisonRanks.length">
                 <td colspan="8" class="text-center text-muted py-3 emap-cmp-table-empty">
-                  暂无比价明细（接口已返回成功）
+                  暂无比价明细
                 </td>
               </tr>
               <tr v-for="row in comparisonRanks" :key="`${row.rank}-${row.smelter}`">
@@ -1526,6 +1526,27 @@ function warehousePopupHtml(p: MapPoint): string {
   )}</span></div>`
 }
 
+function smelterPopupHtml(p: MapPoint): string {
+  const row = p.raw
+  const xrbShip = pickStr(row, ['循融宝发货', 'xunrongbao_ship', 'xrb_ship'])
+  const xrbShipLower = xrbShip.toLowerCase()
+  const xrbShipText =
+    xrbShipLower === 'true' || xrbShip === '1'
+      ? '是'
+      : xrbShipLower === 'false' || xrbShip === '0'
+        ? '否'
+        : xrbShip
+  const xrbBlock =
+    xrbShip !== ''
+      ? `<div class="emap-popup-type"><span class="emap-popup-type-label">循融宝发货：</span><span class="emap-popup-type-value">${escapeHtml(
+          xrbShipText,
+        )}</span></div>`
+      : ''
+  return `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/>${xrbBlock}<span class="emap-popup-subtitle text-muted small">${escapeHtml(
+    p.subtitle,
+  )}</span></div>`
+}
+
 function initMap() {
   const el = mapElRef.value
   if (!el || mapRef.value) return
@@ -1861,9 +1882,7 @@ function renderMarkers(points: MapPoint[]) {
     const popupHtml =
       p.kind === 'warehouse'
         ? warehousePopupHtml(p)
-        : `<div class="emap-popup"><strong>${escapeHtml(p.title)}</strong><br/><span class="emap-popup-subtitle text-muted small">${escapeHtml(
-            p.subtitle,
-          )}</span></div>`
+        : smelterPopupHtml(p)
     marker.bindPopup(popupHtml)
     marker.bindTooltip(popupHtml, {
       sticky: false,

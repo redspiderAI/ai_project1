@@ -322,6 +322,9 @@
           currentWarehouseEditId: null,
           smelterRegionMap: new Map(),
           warehouseRegionMap: new Map(),
+          smelterShipMap: new Map(),
+          smelterShipLoaded: false,
+          smelterShipPatchQueued: false,
         }
 
         function pick(obj, keys) {
@@ -422,6 +425,144 @@
           return json
         }
 
+        async function getJson(path) {
+          const res = await fetch(path, { credentials: 'same-origin' })
+          const text = await res.text()
+          let json = null
+          try {
+            json = text ? JSON.parse(text) : null
+          } catch (_) {}
+          if (!res.ok) {
+            const msg = json && json.message ? json.message : text || `HTTP ${res.status}`
+            throw new Error(msg)
+          }
+          return json
+        }
+
+        function extractSmelterRows(json) {
+          const root = json && typeof json === 'object' ? json : {}
+          const data = root.data && typeof root.data === 'object' ? root.data : root
+          if (Array.isArray(data)) return data
+          if (Array.isArray(data.list)) return data.list
+          if (Array.isArray(data.rows)) return data.rows
+          if (Array.isArray(data.smelters)) return data.smelters
+          if (Array.isArray(root.list)) return root.list
+          if (Array.isArray(root.rows)) return root.rows
+          if (Array.isArray(root.smelters)) return root.smelters
+          return []
+        }
+
+        async function refreshSmelterShipMap() {
+          const paths = ['/tl/get_smelters?include_inactive=true', '/tl/get_smelters']
+          for (const path of paths) {
+            try {
+              const json = await getJson(path)
+              const rows = extractSmelterRows(json)
+              if (!rows.length) continue
+              state.smelterShipMap.clear()
+              for (const row of rows) {
+                const id = Number(pick(row, ['冶炼厂id', 'smelter_id', 'factory_id', 'id']))
+                if (!Number.isFinite(id)) continue
+                const ship = pick(row, ['循融宝发货', 'xunrongbao_ship', 'xrb_ship'])
+                state.smelterShipMap.set(id, ship === '' ? '-' : ship)
+              }
+              state.smelterShipLoaded = true
+              return
+            } catch (_) {}
+          }
+        }
+
+        async function setSmelterShipStatus(id, enabled) {
+          const body = { 冶炼厂id: id, 循融宝发货: !!enabled }
+          const paths = ['/t1/set_smelter_xunrongbao', '/tl/set_smelter_xunrongbao']
+          let lastErr = null
+          for (const path of paths) {
+            try {
+              await postJson(path, body)
+              state.smelterShipMap.set(id, enabled ? '1' : '0')
+              state.smelterShipLoaded = true
+              return
+            } catch (err) {
+              lastErr = err
+            }
+          }
+          throw lastErr || new Error('设置循融宝发货失败')
+        }
+
+        function isShipEnabled(raw) {
+          const t = String(raw == null ? '' : raw).trim().toLowerCase()
+          return t === '1' || t === 'true'
+        }
+
+        function patchSmelterTableShipColumn() {
+          const smBody = document.getElementById('smelter-table-body')
+          if (!smBody) return
+          const table = smBody.closest('table')
+          if (!table) return
+
+          const headerRows = table.querySelectorAll('thead tr')
+          const lastHeader = headerRows[headerRows.length - 1]
+          if (lastHeader && !lastHeader.querySelector('th[data-col="xrb-ship"]')) {
+            const th = document.createElement('th')
+            th.textContent = '循融宝发货'
+            th.setAttribute('data-col', 'xrb-ship')
+            const opTh = Array.from(lastHeader.children).find((n) => /操作/.test(n.textContent || ''))
+            if (opTh) lastHeader.insertBefore(th, opTh)
+            else lastHeader.appendChild(th)
+          }
+
+          const rows = smBody.querySelectorAll('tr')
+          for (const tr of rows) {
+            if (tr.querySelector('td[colspan]')) continue
+            let td = tr.querySelector('td[data-col="xrb-ship"]')
+            if (!td) {
+              td = document.createElement('td')
+              td.setAttribute('data-col', 'xrb-ship')
+              const opTd = tr.querySelector('td .edit-btn')?.closest('td')
+              if (opTd) tr.insertBefore(td, opTd)
+              else tr.appendChild(td)
+            }
+            const editBtn = tr.querySelector('.edit-btn')
+            const id = Number(editBtn?.getAttribute('data-id') || '')
+            const rawText = Number.isFinite(id)
+              ? (state.smelterShipMap.get(id) ?? (state.smelterShipLoaded ? '-' : '加载中...'))
+              : '-'
+            const shipText = String(rawText).trim().toLowerCase()
+            const nextText =
+              shipText === '1' || shipText === 'true'
+                ? '是'
+                : shipText === '0' || shipText === 'false'
+                  ? '否'
+                  : rawText
+            if (td.textContent !== nextText) td.textContent = nextText
+
+            const opTd = tr.querySelector('td .edit-btn')?.closest('td')
+            if (opTd && !opTd.querySelector('.xrb-toggle-btn')) {
+              const btn = document.createElement('button')
+              btn.type = 'button'
+              btn.className = 'btn btn-sm xrb-toggle-btn'
+              btn.style.marginLeft = '6px'
+              btn.setAttribute('data-id', String(id))
+              btn.textContent = isShipEnabled(rawText) ? '设为否' : '设为是'
+              opTd.appendChild(btn)
+            }
+            const toggleBtn = opTd?.querySelector('.xrb-toggle-btn')
+            if (toggleBtn) {
+              toggleBtn.setAttribute('data-id', String(id))
+              toggleBtn.textContent = isShipEnabled(rawText) ? '设为否' : '设为是'
+            }
+          }
+        }
+
+        function schedulePatchSmelterTableShipColumn() {
+          if (state.smelterShipPatchQueued) return
+          state.smelterShipPatchQueued = true
+          requestAnimationFrame(() => {
+            state.smelterShipPatchQueued = false
+            patchSmelterTableShipColumn()
+          })
+        }
+
         function closeModal() {
           const closeBtn = document.getElementById('modal-close') || document.getElementById('modal-cancel')
           if (closeBtn) closeBtn.click()
@@ -429,19 +570,16 @@
 
         async function handleCustomSave() {
           const title = (document.getElementById('modal-title')?.textContent || '').trim()
-          if (!title) return false
+          const hasSmelterForm = !!document.getElementById('smelter-name')
+          const hasWarehouseForm = !!document.getElementById('warehouse-name')
+          if (!(title || hasSmelterForm || hasWarehouseForm)) return false
 
-          if (title.includes('冶炼厂')) {
+          if (title.includes('冶炼厂') || hasSmelterForm) {
             const name = (document.getElementById('smelter-name')?.value || '').trim()
             const address = (document.getElementById('smelter-address')?.value || '').trim()
-            const parsed = splitCnAddress(address)
-            const province = (document.getElementById('smelter-province')?.value || '').trim() || parsed.province
-            const city = (document.getElementById('smelter-city')?.value || '').trim() || parsed.city
-            const district = (document.getElementById('smelter-district')?.value || '').trim() || parsed.district
             if (!name) throw new Error('请填写冶炼厂名称')
-            if (!(province && city && district)) throw new Error('请手动补齐省/市/区')
             const editing = title.includes('编辑') && Number.isFinite(state.currentSmelterEditId)
-            const payload = { 冶炼厂名: name, 地址: address, 省: province, 市: city, 区: district }
+            const payload = { 冶炼厂名: name, 地址: address }
             if (editing) {
               payload['冶炼厂id'] = state.currentSmelterEditId
               payload['is_active'] = true
@@ -453,7 +591,7 @@
             return true
           }
 
-          if (title.includes('库房')) {
+          if (title.includes('库房') || hasWarehouseForm) {
             const name = (document.getElementById('warehouse-name')?.value || '').trim()
             const address = (document.getElementById('warehouse-address')?.value || '').trim()
             const parsed = splitCnAddress(address)
@@ -513,10 +651,39 @@
         document.addEventListener(
           'click',
           async (evt) => {
-            const btn = evt.target.closest('#modal-confirm')
+            const btn = evt.target.closest('#smelter-table-body .xrb-toggle-btn')
             if (!btn) return
-            const title = (document.getElementById('modal-title')?.textContent || '').trim()
-            if (!/冶炼厂|库房/.test(title)) return
+            const id = Number(btn.getAttribute('data-id') || '')
+            if (!Number.isFinite(id)) return
+            const currentRaw = state.smelterShipMap.get(id)
+            const nextEnabled = !isShipEnabled(currentRaw)
+            try {
+              btn.disabled = true
+              const old = btn.textContent
+              btn.textContent = '处理中...'
+              await setSmelterShipStatus(id, nextEnabled)
+              schedulePatchSmelterTableShipColumn()
+              btn.textContent = old || '更改状态'
+            } catch (err) {
+              alert(err instanceof Error ? err.message : String(err))
+            } finally {
+              btn.disabled = false
+            }
+          },
+          true,
+        )
+
+        document.addEventListener(
+          'click',
+          async (evt) => {
+            const btn =
+              evt.target.closest('#modal-confirm') ||
+              evt.target.closest('.modal.show .btn-primary') ||
+              evt.target.closest('.modal .btn-primary')
+            if (!btn) return
+            const hasSmelterForm = !!document.getElementById('smelter-name')
+            const hasWarehouseForm = !!document.getElementById('warehouse-name')
+            if (!(hasSmelterForm || hasWarehouseForm)) return
             evt.preventDefault()
             evt.stopImmediatePropagation()
             try {
@@ -535,24 +702,24 @@
           true,
         )
 
-        const mo = new MutationObserver(async () => {
+        const mo = new MutationObserver(() => {
           const title = (document.getElementById('modal-title')?.textContent || '').trim()
-          if (title.includes('冶炼厂')) {
-            ensureRegionInputs('smelter')
-            const region = state.smelterRegionMap.get(state.currentSmelterEditId) || null
-            fillRegionInputs('smelter', region)
-          }
-          if (title.includes('库房')) {
+          const hasSmelterForm = !!document.getElementById('smelter-name')
+          const hasWarehouseForm = !!document.getElementById('warehouse-name')
+          if (title.includes('库房') || hasWarehouseForm) {
             ensureRegionInputs('warehouse')
             const region = state.warehouseRegionMap.get(state.currentWarehouseEditId) || null
             fillRegionInputs('warehouse', region)
           }
           markMissingRows()
+          schedulePatchSmelterTableShipColumn()
         })
 
         function start() {
           mo.observe(document.body, { childList: true, subtree: true })
           markMissingRows()
+          schedulePatchSmelterTableShipColumn()
+          refreshSmelterShipMap().finally(() => schedulePatchSmelterTableShipColumn())
         }
 
         if (document.readyState === 'loading') {
