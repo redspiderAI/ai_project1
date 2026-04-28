@@ -9,6 +9,7 @@ function unwrapList(data: unknown): Record<string, unknown>[] {
   if (Array.isArray(o.list)) return o.list as Record<string, unknown>[]
   if (Array.isArray(o.items)) return o.items as Record<string, unknown>[]
   if (Array.isArray(o.records)) return o.records as Record<string, unknown>[]
+  if (Array.isArray(o.rows)) return o.rows as Record<string, unknown>[]
   if (o.data != null && typeof o.data === 'object') return unwrapList(o.data)
   return []
 }
@@ -109,7 +110,7 @@ function extractTlListPayload(raw: unknown): { rows: Record<string, unknown>[]; 
   }
   if (data != null && typeof data === 'object' && !Array.isArray(data)) {
     const d = data as Record<string, unknown>
-    const listRaw = d.list ?? d.items ?? d.records
+    const listRaw = d.list ?? d.items ?? d.records ?? d.rows
     if (Array.isArray(listRaw)) {
       const rows = listRaw.filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
       return { rows, total: pickTotalFromPayload(d) }
@@ -319,14 +320,15 @@ export async function tlDeleteJson(pathWithQuery: string): Promise<unknown> {
 
 /**
  * GET /tl/get_warehouse_links_outbound
- * 先不带 page/size 请求（部分后端仅接受 源库房id，多余 query 会 422）；
- * 再尝试 from_warehouse_id；仍失败再用分页拉全。
+ * 标准 query：`warehouse_id`（必填）、可选 `page`/`size`。
+ * 仍尝试旧版 `源库房id`、`from_warehouse_id` 以兼容老服务。
  */
 export async function fetchTlWarehouseLinksOutbound(
   fromWarehouseId: number,
 ): Promise<Record<string, unknown>[]> {
   const id = fromWarehouseId
   const noPagePaths = [
+    `/tl/get_warehouse_links_outbound?warehouse_id=${id}`,
     `/tl/get_warehouse_links_outbound?${encodeURIComponent('源库房id')}=${id}`,
     `/tl/get_warehouse_links_outbound?from_warehouse_id=${id}`,
   ]
@@ -448,4 +450,56 @@ export async function fetchTlWarehouseLinksList(
     rows: parsed.rows,
     total: parsed.total ?? parsed.rows.length,
   }
+}
+
+/**
+ * GET /tl/calculate_distance
+ * Haversine 球面直线距离（WGS84），单位见返回字段。
+ * 部分环境要求 query 带 warehouse_id（及可选 to_warehouse_id）做校验或审计。
+ */
+export async function fetchTlCalculateDistance(
+  lng1: number,
+  lat1: number,
+  lng2: number,
+  lat2: number,
+  options?: {
+    fromWarehouseId?: number
+    toWarehouseId?: number
+  },
+): Promise<{ distanceKm: number; distanceM?: number }> {
+  const q = new URLSearchParams({
+    lng1: String(lng1),
+    lat1: String(lat1),
+    lng2: String(lng2),
+    lat2: String(lat2),
+  })
+  const fromId = options?.fromWarehouseId
+  const toId = options?.toWarehouseId
+  const fromOk = fromId != null && Number.isFinite(fromId) && fromId > 0
+  const toOk = toId != null && Number.isFinite(toId) && toId > 0
+  /** 后端常要求 query 必带 warehouse_id；源 id 解析失败时至少用目标 id 满足校验 */
+  if (fromOk) {
+    q.set('warehouse_id', String(fromId))
+  } else if (toOk) {
+    q.set('warehouse_id', String(toId))
+  }
+  if (fromOk && toOk && toId !== fromId) {
+    q.set('to_warehouse_id', String(toId))
+  }
+  const raw = await tlGetJson(`/tl/calculate_distance?${q.toString()}`)
+  assertTlBizCode200(raw, '距离计算')
+  const data = unwrapData(raw)
+  if (data == null || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('距离计算：响应 data 无效')
+  }
+  const o = data as Record<string, unknown>
+  const kmRaw = o.distance_km ?? o.distanceKm
+  const mRaw = o.distance_m ?? o.distanceM
+  const distanceKm = typeof kmRaw === 'number' ? kmRaw : Number(kmRaw)
+  if (!Number.isFinite(distanceKm)) {
+    throw new Error('距离计算：缺少有效的 distance_km')
+  }
+  const distanceM =
+    mRaw != null && Number.isFinite(Number(mRaw)) ? Number(mRaw) : undefined
+  return { distanceKm, distanceM }
 }

@@ -269,6 +269,9 @@
         </transition>
       </div>
       <div v-if="selectedWarehouse" class="emap-floating-actions">
+        <p v-if="compareError" class="emap-floating-actions-err small text-danger mb-1 w-100" role="alert">
+          {{ compareError }}
+        </p>
         <button
           type="button"
           class="btn btn-sm btn-outline-primary"
@@ -292,6 +295,25 @@
           @click="openComparisonModal"
         >
           查看比价结果
+        </button>
+        <button
+          type="button"
+          class="btn btn-sm btn-outline-info"
+          :disabled="warehouseDistanceLoading"
+          :title="
+            warehouseDistanceMonitorOn
+              ? '关闭库房绑定距离线，可恢复显示比价流向'
+              : '绘制当前库房到各绑定库房的直线并标注球面距离（与比价线互斥）'
+          "
+          @click="onWarehouseDistanceMonitorClick"
+        >
+          {{
+            warehouseDistanceLoading
+              ? '测算中…'
+              : warehouseDistanceMonitorOn
+                ? '关闭距离监测'
+                : '库房距离监测'
+          }}
         </button>
       </div>
       <div v-if="comparisonModalVisible" class="emap-cmp-panel" :class="{ 'emap-cmp-panel--collapsed': comparisonPanelCollapsed }">
@@ -619,8 +641,10 @@ import shadowUrl from 'leaflet/dist/images/marker-shadow.png'
 import axios from 'axios'
 import { ApiPaths } from '../api/paths'
 import {
+  fetchTlCalculateDistance,
   fetchTlCategories,
   fetchTlSmeltersAll,
+  fetchTlWarehouseLinksOutbound,
   fetchTlWarehouseTypes,
   fetchTlWarehousesAll,
   postTlGetComparison,
@@ -854,6 +878,9 @@ watch(toolbarCollapsed, async () => {
 })
 
 const compareLoading = ref(false)
+/** 库房→绑定库房距离连线模式（与比价流向互斥） */
+const warehouseDistanceMonitorOn = ref(false)
+const warehouseDistanceLoading = ref(false)
 const forecastLoading = ref(false)
 const compareError = ref('')
 const forecastError = ref('')
@@ -1230,8 +1257,21 @@ function smelterLabel(row: Record<string, unknown>): string {
 }
 
 function warehouseId(row: Record<string, unknown>): string {
-  const id = pickStr(row, ['仓库id', 'warehouse_id', 'id', 'warehouseId'])
+  const id = pickStr(row, ['仓库id', '库房id', 'warehouse_id', 'id', 'warehouseId'])
   return id || warehouseLabel(row) || newId()
+}
+
+/** 与 /tl/get_warehouses 等返回列对齐（含「库房id」），供绑定距离、calculate_distance 使用 */
+function warehouseNumericIdFromRow(row: Record<string, unknown>): number | null {
+  const keys = ['仓库id', '库房id', 'warehouse_id', 'warehouseId', 'WarehouseId', 'id']
+  const n = pickNumber(row, keys)
+  if (n != null && n > 0) return n
+  const s = pickStr(row, keys)
+  if (s) {
+    const m = Number(String(s).trim())
+    if (Number.isFinite(m) && m > 0) return m
+  }
+  return null
 }
 
 function smelterId(row: Record<string, unknown>): string {
@@ -1691,6 +1731,10 @@ function refreshAllMarkerVisualState() {
 }
 
 watch(selectedWarehouse, () => {
+  if (warehouseDistanceMonitorOn.value) {
+    warehouseDistanceMonitorOn.value = false
+    clearMapComparisonGraphicsOnly()
+  }
   refreshAllMarkerVisualState()
 })
 
@@ -1967,11 +2011,16 @@ function closeComparisonCellDetail() {
   comparisonCellDetail.value = null
 }
 
-function clearComparisonOverlays() {
+function clearMapComparisonGraphicsOnly() {
   cancelFlowOverlayAnimations()
   stopFlowAnimations()
   flowLayerRef.value?.clearLayers()
   topTipLayerRef.value?.clearLayers()
+}
+
+function clearComparisonOverlays() {
+  warehouseDistanceMonitorOn.value = false
+  clearMapComparisonGraphicsOnly()
   comparisonRanks.value = []
   lastComparisonSortKey.value = ''
   compareError.value = ''
@@ -2614,7 +2663,135 @@ function findSmelterPoint(name: string): MapPoint | null {
   return loose ?? null
 }
 
+function findWarehousePointByNumericId(wid: number): MapPoint | null {
+  for (const p of allWarehousePoints.value) {
+    const id = warehouseNumericIdFromRow(p.raw)
+    if (id != null && id === wid) return p
+    const sid = Number(String(p.id).trim())
+    if (Number.isFinite(sid) && sid === wid && sid > 0) return p
+  }
+  return null
+}
+
+function linkOutboundTargetId(row: Record<string, unknown>): number | null {
+  const direct = pickNumber(row, [
+    'to_warehouse_id',
+    '目标库房id',
+    '目标仓库id',
+    'target_warehouse_id',
+    'to_id',
+    'target_id',
+  ])
+  if (direct != null && direct > 0) return direct
+  const nestedKeys = ['to_warehouse', 'target_warehouse', '目标库房', '目标仓库']
+  for (const k of nestedKeys) {
+    const v = row[k]
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const n = pickNumber(v as Record<string, unknown>, [
+        'id',
+        '仓库id',
+        'warehouse_id',
+        '库房id',
+        'warehouseId',
+      ])
+      if (n != null && n > 0) return n
+    }
+  }
+  return null
+}
+
+async function drawWarehouseBindingDistanceLines(warehouse: MapPoint) {
+  const flowLayer = flowLayerRef.value
+  const flowRenderer = flowPathSvgRendererRef.value
+  if (!flowLayer) throw new Error('地图流向图层未初始化，请刷新页面后重试')
+  const whId = warehouseNumericIdFromRow(warehouse.raw)
+  if (whId == null) throw new Error('该库房缺少仓库 id，无法查询绑定')
+  const links = await fetchTlWarehouseLinksOutbound(whId)
+  const targetIds = new Set<number>()
+  for (const row of links) {
+    const tid = linkOutboundTargetId(row)
+    if (tid != null && tid > 0) targetIds.add(tid)
+  }
+  if (!targetIds.size) {
+    throw new Error('该库房暂无出库绑定（请先在「库房距离监测配置」中维护）')
+  }
+  const rendererOpt = flowRenderer ? { renderer: flowRenderer } : {}
+  let drawn = 0
+  for (const tid of targetIds) {
+    const tgt = findWarehousePointByNumericId(tid)
+    if (!tgt) continue
+    const latlngs: L.LatLngTuple[] = [
+      [warehouse.lat, warehouse.lng],
+      [tgt.lat, tgt.lng],
+    ]
+    L.polyline(latlngs, {
+      color: '#c084fc',
+      weight: 3,
+      opacity: 0.92,
+      dashArray: '6 10',
+      lineCap: 'round',
+      lineJoin: 'round',
+      className: 'emap-wh-bind-line',
+      interactive: false,
+      ...rendererOpt,
+    }).addTo(flowLayer)
+
+    let kmStr = ''
+    try {
+      const d = await fetchTlCalculateDistance(warehouse.lng, warehouse.lat, tgt.lng, tgt.lat, {
+        fromWarehouseId: whId,
+        toWarehouseId: tid,
+      })
+      kmStr = `${d.distanceKm.toFixed(2)} km`
+    } catch {
+      const m = greatCircleDistanceMeters(warehouse.lat, warehouse.lng, tgt.lat, tgt.lng)
+      kmStr = `${(m / 1000).toFixed(2)} km`
+    }
+    const midLat = (warehouse.lat + tgt.lat) / 2
+    const midLng = (warehouse.lng + tgt.lng) / 2
+    L.marker([midLat, midLng], {
+      icon: L.divIcon({
+        className: 'emap-wh-bind-dist-marker',
+        html: `<div class="emap-wh-bind-dist-label">${escapeHtml(kmStr)}</div>`,
+        iconSize: [72, 26],
+        iconAnchor: [36, 13],
+      }),
+      interactive: false,
+    }).addTo(flowLayer)
+    drawn++
+  }
+  if (!drawn) {
+    throw new Error('绑定的库房在地图上无坐标或未加载，无法连线')
+  }
+}
+
+async function onWarehouseDistanceMonitorClick() {
+  const wh = selectedWarehouse.value
+  if (!wh || wh.kind !== 'warehouse') return
+  if (warehouseDistanceMonitorOn.value) {
+    warehouseDistanceMonitorOn.value = false
+    clearMapComparisonGraphicsOnly()
+    if (comparisonRanks.value.length) {
+      renderComparisonOverlay(wh, comparisonRanks.value)
+    }
+    return
+  }
+  clearMapComparisonGraphicsOnly()
+  warehouseDistanceLoading.value = true
+  try {
+    await drawWarehouseBindingDistanceLines(wh)
+    warehouseDistanceMonitorOn.value = true
+    compareError.value = ''
+  } catch (e) {
+    compareError.value = e instanceof Error ? e.message : String(e)
+    warehouseDistanceMonitorOn.value = false
+  } finally {
+    warehouseDistanceLoading.value = false
+  }
+}
+
 function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[]) {
+  warehouseDistanceMonitorOn.value = false
   cancelFlowOverlayAnimations()
   stopFlowAnimations()
   const flowLayer = flowLayerRef.value
@@ -2699,7 +2876,7 @@ function renderComparisonOverlay(warehouse: MapPoint, ranks: ComparisonRankItem[
 
 watch(showAllComparisonFlows, () => {
   const wh = selectedWarehouse.value
-  if (!wh || !comparisonRanks.value.length) return
+  if (!wh || !comparisonRanks.value.length || warehouseDistanceMonitorOn.value) return
   renderComparisonOverlay(wh, comparisonRanks.value)
 })
 
@@ -2709,6 +2886,10 @@ type RunComparisonOptions = {
 }
 
 async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunComparisonOptions) {
+  if (warehouseDistanceMonitorOn.value) {
+    warehouseDistanceMonitorOn.value = false
+    clearMapComparisonGraphicsOnly()
+  }
   const { ids: categoryIds, totalTons } = getSelectedCategoryPayload()
   if (!categoryIds.length || totalTons <= 0) {
     if (options?.announceMissingPrereq) {
@@ -2722,7 +2903,7 @@ async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunCompa
   compareLoading.value = true
   compareError.value = ''
   try {
-    const whId = pickNumber(warehouse.raw, ['仓库id', 'warehouse_id', 'id'])
+    const whId = warehouseNumericIdFromRow(warehouse.raw)
     if (whId == null) throw new Error('该库房缺少仓库id，无法自动比价')
     const smelterIds = allSmelterPoints.value
       .map((s) => pickNumber(s.raw, ['冶炼厂id', 'factory_id', 'smelter_id', 'id']))
@@ -4666,6 +4847,18 @@ onBeforeUnmount(() => {
   color: #fff;
 }
 
+.emap-shell--dashboard :deep(.btn-outline-info) {
+  color: #c4b5fd;
+  border-color: rgba(167, 139, 250, 0.55);
+  background: rgba(15, 23, 42, 0.35);
+}
+
+.emap-shell--dashboard :deep(.btn-outline-info:hover) {
+  background: rgba(76, 29, 149, 0.45);
+  border-color: #a78bfa;
+  color: #f5f3ff;
+}
+
 .emap-shell--dashboard :deep(.form-check-input) {
   background-color: rgba(8, 22, 44, 0.85);
   border-color: rgba(56, 189, 248, 0.45);
@@ -4683,6 +4876,24 @@ onBeforeUnmount(() => {
   background: transparent;
   border: none;
 }
+
+.emap-wh-bind-dist-marker {
+  background: transparent !important;
+  border: none !important;
+}
+
+.emap-wh-bind-dist-label {
+  padding: 2px 8px;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #fae8ff;
+  background: rgba(88, 28, 135, 0.9);
+  border: 1px solid rgba(216, 180, 254, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
 .emap-marker--warehouse .emap-pin-inner {
   width: 22px;
   height: 22px;

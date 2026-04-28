@@ -3,16 +3,19 @@
     <div class="card shadow-sm">
       <div class="card-body">
         <div class="toolbar">
-          <div class="left-tools">
+          <div v-if="!isRegularUser" class="left-tools">
             <input v-model.trim="keyword" class="form-control form-control-sm" placeholder="用户名/姓名关键字" />
             <select v-model="roleFilter" class="form-select form-select-sm">
-                <option value="">全部角色</option>
-                <option value="admin">管理员</option>
-                <option value="user">普通用户</option>
+              <option value="">全部角色</option>
+              <option value="admin">管理员</option>
+              <option value="user">普通用户</option>
             </select>
             <button class="btn btn-sm btn-outline-primary" @click="loadUsers(1)">查询</button>
           </div>
-          <button class="btn btn-sm btn-success" @click="openCreateModal">新增用户</button>
+          <p v-else class="user-manage-self-hint text-muted small mb-0">
+            当前为普通用户，仅可查看本账号信息并修改自己的密码。
+          </p>
+          <button v-if="!isRegularUser" class="btn btn-sm btn-success" @click="openCreateModal">新增用户</button>
         </div>
 
         <div v-if="errorText" class="alert alert-warning mt-3 mb-0">{{ errorText }}</div>
@@ -38,7 +41,7 @@
                 <td colspan="7" class="text-center py-4 text-muted">暂无用户数据</td>
               </tr>
               <tr v-for="u in users" :key="u.id">
-                <td>{{ u.id }}</td>
+                <td>{{ u.id > 0 ? u.id : '—' }}</td>
                 <td>{{ u.username }}</td>
                 <td>{{ u.real_name || '-' }}</td>
                 <td>
@@ -48,9 +51,21 @@
                 <td>{{ u.email || '-' }}</td>
                 <td>
                   <div class="action-btns">
-                    <button class="btn btn-sm btn-outline-primary" @click="openRoleModal(u)">改角色</button>
+                    <button
+                      v-if="!isRegularUser"
+                      class="btn btn-sm btn-outline-primary"
+                      @click="openRoleModal(u)"
+                    >
+                      改角色
+                    </button>
                     <button class="btn btn-sm btn-outline-warning" @click="openPasswordModal(u)">改密码</button>
-                    <button class="btn btn-sm btn-outline-danger" @click="confirmDelete(u)">删除</button>
+                    <button
+                      v-if="!isRegularUser"
+                      class="btn btn-sm btn-outline-danger"
+                      @click="confirmDelete(u)"
+                    >
+                      删除
+                    </button>
                   </div>
                 </td>
               </tr>
@@ -58,7 +73,7 @@
           </table>
         </div>
 
-        <div class="pager">
+        <div v-if="!isRegularUser" class="pager">
           <button class="btn btn-sm btn-outline-secondary" :disabled="page <= 1" @click="loadUsers(page - 1)">
             上一页
           </button>
@@ -183,7 +198,12 @@ import {
   changeUserPassword,
   createUser,
   deleteUser,
+  fetchMeUserProfile,
   fetchUsers,
+  getSessionRole,
+  getSessionUserId,
+  getSessionUsername,
+  isRegularUserSession,
   updateUserRole,
   type UserRow,
 } from '../api/authApi'
@@ -219,12 +239,61 @@ const pwdForm = ref({
   new_password: '',
 })
 
+const isRegularUser = computed(() => isRegularUserSession())
+
 const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize.value)))
+
+/** 普通用户无权限拉列表时：/auth/me 或本地会话拼一行，不抛错、不展示「权限不足」 */
+async function fillRestrictedSelfRows(selfName: string): Promise<UserRow[]> {
+  const me = await fetchMeUserProfile()
+  if (me && me.username === selfName) return [me]
+  const id = getSessionUserId()
+  const role = getSessionRole() || 'user'
+  return [
+    {
+      id: id ?? 0,
+      username: selfName,
+      real_name: '',
+      role,
+    },
+  ]
+}
 
 async function loadUsers(nextPage = page.value) {
   loading.value = true
   errorText.value = ''
   try {
+    const restricted = isRegularUserSession()
+    const selfName = getSessionUsername()
+    if (restricted && !selfName) {
+      users.value = []
+      total.value = 0
+      page.value = 1
+      errorText.value = '无法识别当前登录账号，请退出后重新登录。'
+      return
+    }
+    if (restricted && selfName) {
+      try {
+        const data = await fetchUsers({
+          keyword: selfName,
+          page: 1,
+          page_size: 200,
+        })
+        let items = data.items.filter((u) => u.username === selfName)
+        if (!items.length) {
+          items = await fillRestrictedSelfRows(selfName)
+        }
+        users.value = items
+        total.value = items.length
+        page.value = 1
+      } catch {
+        users.value = await fillRestrictedSelfRows(selfName)
+        total.value = users.value.length
+        page.value = 1
+      }
+      return
+    }
+
     const data = await fetchUsers({
       keyword: keyword.value || undefined,
       role: roleFilter.value || undefined,
@@ -242,6 +311,7 @@ async function loadUsers(nextPage = page.value) {
 }
 
 function openCreateModal() {
+  if (isRegularUserSession()) return
   createForm.value = {
     username: '',
     real_name: '',
@@ -255,6 +325,7 @@ function openCreateModal() {
 }
 
 async function submitCreate() {
+  if (isRegularUserSession()) return
   if (!createForm.value.username || !createForm.value.password) {
     createErrorText.value = '用户名和密码必填'
     return
@@ -280,12 +351,14 @@ async function submitCreate() {
 }
 
 function openRoleModal(u: UserRow) {
+  if (isRegularUserSession()) return
   currentUser.value = u
   roleValue.value = u.role || 'user'
   showRole.value = true
 }
 
 async function submitRole() {
+  if (isRegularUserSession()) return
   if (!currentUser.value) return
   submitting.value = true
   try {
@@ -300,6 +373,10 @@ async function submitRole() {
 }
 
 function openPasswordModal(u: UserRow) {
+  if (isRegularUserSession()) {
+    const self = getSessionUsername()
+    if (self && u.username !== self) return
+  }
   currentUser.value = u
   pwdForm.value = { admin_key: '', new_password: '' }
   showPassword.value = true
@@ -307,6 +384,14 @@ function openPasswordModal(u: UserRow) {
 
 async function submitPassword() {
   if (!currentUser.value) return
+  if (isRegularUserSession()) {
+    const self = getSessionUsername()
+    if (self && currentUser.value.username !== self) return
+  }
+  if (!currentUser.value.id || currentUser.value.id <= 0) {
+    alert('当前无法获取您的用户编号（请重新登录后再试修改密码）。')
+    return
+  }
   if (!pwdForm.value.admin_key || !pwdForm.value.new_password) {
     alert('管理员密钥和新密码必填')
     return
@@ -324,6 +409,7 @@ async function submitPassword() {
 }
 
 async function confirmDelete(u: UserRow) {
+  if (isRegularUserSession()) return
   if (!confirm(`确认删除用户「${u.username}」吗？`)) return
   submitting.value = true
   try {
