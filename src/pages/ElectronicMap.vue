@@ -87,7 +87,7 @@
               <div class="emap-cat-toolbar-list">
                 <label v-for="c in categories" :key="c.id" class="emap-cat-pill">
                   <input v-model="categoryPrefs[c.id].selected" type="checkbox" class="form-check-input" />
-                  <span class="emap-cat-name">{{ toCanonicalCategoryName(c.name) }}</span>
+                  <span class="emap-cat-name">{{ c.name }}</span>
                   <input
                     v-model="categoryPrefs[c.id].tons"
                     type="number"
@@ -831,26 +831,22 @@ const categories = ref<TlCategoryRow[]>([])
 const categoriesLoading = ref(false)
 const categoriesError = ref('')
 
-function normalizeCategoryDisplayName(name: string): string {
-  const raw = String(name || '').trim()
-  if (!raw) return ''
-  // 地图筛选仅展示品种本名：常见别名分隔符后内容不展示
-  const first = raw.split(/[，,、/|；;]+/)[0] || raw
-  return first.trim()
-}
-
-function toCanonicalCategoryName(name: string): string {
-  const base = normalizeCategoryDisplayName(name)
-  const aliasMap: Record<string, string> = {
-    黑皮: '黑皮电瓶',
-    黑皮电池: '黑皮电瓶',
-    大白: '大白电池',
-    电信电池: '电信电瓶',
-    电动车: '电动车电池',
-    电动车电瓶: '电动车电池',
-  }
-  return aliasMap[base] ?? base
-}
+/**
+ * 电子地图回收品类：与比价侧「十个品种」一致（固定 id + 展示名）。
+ * 仅以列表为准筛选接口返回项并排序；接口若缺少某 id 则不展示该行。
+ */
+const EMAP_FIXED_CATEGORY_ORDER: readonly TlCategoryRow[] = [
+  { id: 6, name: '电动车电池' },
+  { id: 4, name: '黑皮电瓶' },
+  { id: 15, name: '管式电瓶' },
+  { id: 11, name: '大白电池' },
+  { id: 16, name: '摩托车电瓶' },
+  { id: 2, name: '电子秤电瓶' },
+  { id: 5, name: '电信电瓶' },
+  { id: 17, name: 'AGM电瓶' },
+  { id: 12, name: '电轿电瓶' },
+  { id: 3, name: '小四斤电瓶' },
+]
 
 watch(toolbarCollapsed, async () => {
   await nextTick()
@@ -3106,15 +3102,12 @@ async function loadCategories() {
   categoriesError.value = ''
   categoriesLoading.value = true
   try {
-    const mapped = (await fetchTlCategories()).map((c) => ({
-      ...c,
-      name: toCanonicalCategoryName(c.name) || c.name,
+    const apiRows = await fetchTlCategories()
+    const apiIds = new Set(apiRows.map((c) => c.id))
+    categories.value = EMAP_FIXED_CATEGORY_ORDER.filter((def) => apiIds.has(def.id)).map((def) => ({
+      id: def.id,
+      name: def.name,
     }))
-    const dedup = new Map<string, TlCategoryRow>()
-    for (const row of mapped) {
-      if (!dedup.has(row.name)) dedup.set(row.name, row)
-    }
-    categories.value = [...dedup.values()]
     ensureCategoryPrefsForList(categories.value)
   } catch (e) {
     categories.value = []
