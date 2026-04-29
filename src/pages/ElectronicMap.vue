@@ -819,6 +819,7 @@ const EMAP_FILTER_TO_ADCODE: Record<string, string> = {
   香港: '810000',
   澳门: '820000',
 }
+const EMAP_LOCAL_PROVINCE_GEOJSON_PATH = '/geo/province'
 
 function emapProvinceFilterToAdcode(sel: string): string | null {
   const t = sel.trim().replace(/\s+/g, '')
@@ -1603,10 +1604,16 @@ function initMap() {
   }
 
   map.on('click', (evt: L.LeafletMouseEvent) => {
-    if (!enableCoordPick.value) return
-    const lat = evt.latlng.lat.toFixed(6)
-    const lng = evt.latlng.lng.toFixed(6)
-    lastClickedCoordText.value = `坐标：${lat}, ${lng}`
+    if (enableCoordPick.value) {
+      const lat = evt.latlng.lat.toFixed(6)
+      const lng = evt.latlng.lng.toFixed(6)
+      lastClickedCoordText.value = `坐标：${lat}, ${lng}`
+    }
+    // 点击地图空白区域：取消当前仓库选中并清空比价/距离线覆盖物
+    if (selectedWarehouse.value?.kind === 'warehouse') {
+      selectedWarehouse.value = null
+      clearComparisonOverlays()
+    }
   })
 }
 
@@ -1740,9 +1747,9 @@ function warehouseIcon(cssColor: string, dimmed = false): L.DivIcon {
   return L.divIcon({
     className: 'emap-marker emap-marker--warehouse',
     html: `<div class="emap-pin-inner${dimClass}" style="background:${bg};"></div>`,
-    iconSize: [26, 26],
-    iconAnchor: [13, 26],
-    popupAnchor: [0, -24],
+    iconSize: [22, 22],
+    iconAnchor: [11, 22],
+    popupAnchor: [0, -20],
   })
 }
 
@@ -1807,7 +1814,7 @@ async function refreshProvinceOutlineLayer() {
   if (!map || !pr) return
   const adcode = emapProvinceFilterToAdcode(pr)
   if (!adcode) return
-  const url = `https://geo.datav.aliyun.com/areas_v3/bound/${adcode}_full.json`
+  const url = `${EMAP_LOCAL_PROVINCE_GEOJSON_PATH}/${adcode}.json`
   try {
     const { data } = await axios.get(url, { timeout: 22000 })
     const layer = L.geoJSON(data as never, {
@@ -1823,7 +1830,11 @@ async function refreshProvinceOutlineLayer() {
     layer.addTo(map)
     provinceOutlineLayerRef.value = layer
   } catch (e) {
-    console.warn('[emap] 省界轮廓加载失败（需可访问 geo.datav.aliyun.com）', pr, e)
+    console.warn(
+      `[emap] 本地省界轮廓加载失败：${url}。请在 public/geo/province 下放置 ${adcode}.json`,
+      pr,
+      e,
+    )
   }
 }
 
@@ -1865,9 +1876,9 @@ function smelterIcon(dimmed = false): L.DivIcon {
   return L.divIcon({
     className: 'emap-marker emap-marker--smelter',
     html: `<div class="${cls}" aria-hidden="true"></div>`,
-    iconSize: [22, 20],
-    iconAnchor: [11, 20],
-    popupAnchor: [0, -20],
+    iconSize: [18, 16],
+    iconAnchor: [9, 16],
+    popupAnchor: [0, -16],
   })
 }
 
@@ -4986,18 +4997,18 @@ onBeforeUnmount(() => {
 }
 
 .emap-marker--warehouse .emap-pin-inner {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 50% 50% 50% 0;
   transform: rotate(-45deg);
-  border: 2px solid #fff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+  border: 1.5px solid #fff;
+  box-shadow: 0 3px 9px rgba(0, 0, 0, 0.25);
   margin: 2px;
 }
 
 .emap-marker--warehouse .emap-pin-inner--dimmed {
-  opacity: 0.48;
-  filter: saturate(0.52) brightness(1.18);
+  opacity: 0.3;
+  filter: saturate(0.4) brightness(1.26);
   border-color: rgba(255, 255, 255, 0.72);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
 }
@@ -5005,15 +5016,15 @@ onBeforeUnmount(() => {
   width: 0;
   height: 0;
   margin: 0 auto;
-  border-left: 11px solid transparent;
-  border-right: 11px solid transparent;
-  border-bottom: 19px solid #c2410c;
+  border-left: 9px solid transparent;
+  border-right: 9px solid transparent;
+  border-bottom: 16px solid #c2410c;
   filter: drop-shadow(0 2px 5px rgba(0, 0, 0, 0.28));
 }
 
 .emap-marker--smelter .emap-smelter-tri--dimmed {
-  opacity: 0.4;
-  filter: saturate(0.48) brightness(1.2) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12));
+  opacity: 0.25;
+  filter: saturate(0.36) brightness(1.26) drop-shadow(0 1px 3px rgba(0, 0, 0, 0.12));
 }
 
 .emap-popup {
