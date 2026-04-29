@@ -889,6 +889,16 @@ const EMAP_FIXED_CATEGORY_ORDER: readonly TlCategoryRow[] = [
   { id: 3, name: '小四斤电瓶' },
 ]
 
+function pickCategoryDisplayName(rawName: string): string {
+  const text = String(rawName ?? '').trim()
+  if (!text) return ''
+  const first = text
+    .split(/[、,，;；]/)
+    .map((s) => s.trim())
+    .find(Boolean)
+  return first ?? text
+}
+
 watch(toolbarCollapsed, async () => {
   await nextTick()
   mapRef.value?.invalidateSize()
@@ -2091,9 +2101,10 @@ function cancelFlowOverlayAnimations() {
   flowOverlayCleanups.length = 0
 }
 
-function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
+function getSelectedCategoryPayload(): { ids: number[]; totalTons: number; tonsByCategory: Array<{ 品类id: number; 吨数: number }> } {
   const ids: number[] = []
   let totalTons = 0
+  const tonsByCategory: Array<{ 品类id: number; 吨数: number }> = []
   for (const c of categories.value) {
     const pref = categoryPrefs[c.id]
     if (!pref?.selected) continue
@@ -2101,9 +2112,10 @@ function getSelectedCategoryPayload(): { ids: number[]; totalTons: number } {
     if (Number.isFinite(t) && t > 0) {
       ids.push(c.id)
       totalTons += t
+      tonsByCategory.push({ 品类id: c.id, 吨数: t })
     }
   }
-  return { ids, totalTons }
+  return { ids, totalTons, tonsByCategory }
 }
 
 function confirmComparisonConditions() {
@@ -2122,23 +2134,28 @@ function confirmComparisonConditions() {
   } catch {
     /* 隐私模式等 */
   }
+
+  // 已选中仓库且正在展示比价时，确认参数后自动重新比价
+  const wh = selectedWarehouse.value
+  if (wh && wh.kind === 'warehouse' && (comparisonModalVisible.value || comparisonRanks.value.length > 0)) {
+    void runComparisonForWarehouse(wh)
+  }
 }
 
 /** 与嵌入页智能比价相同字段（中文键名） */
 function buildSmartComparisonBody(
   warehouseId: number,
   smelterIds: number[],
-  categoryIds: number[],
-  totalTons: number,
+  tonsByCategory: Array<{ 品类id: number; 吨数: number }>,
   priceMode: 'base' | 'tax3',
 ): Record<string, unknown> {
   const isTax3 = priceMode === 'tax3'
   return {
     选中仓库id列表: [warehouseId],
     冶炼厂id列表: smelterIds,
-    品类id列表: categoryIds,
+    品类id列表: tonsByCategory.map((x) => x.品类id),
+    品类吨数列表: tonsByCategory,
     price_type: isTax3 ? '3pct' : null,
-    吨数: totalTons,
     运费计价方式: 'per_ton',
     每车吨数: 35,
     最优价计税口径列表: isTax3 ? ['3pct'] : ['base'],
@@ -2937,7 +2954,7 @@ async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunCompa
     warehouseDistanceMonitorOn.value = false
     clearMapComparisonGraphicsOnly()
   }
-  const { ids: categoryIds, totalTons } = getSelectedCategoryPayload()
+  const { ids: categoryIds, totalTons, tonsByCategory } = getSelectedCategoryPayload()
   if (!categoryIds.length || totalTons <= 0) {
     if (options?.announceMissingPrereq) {
       showComparisonPrereqToast(
@@ -2960,8 +2977,7 @@ async function runComparisonForWarehouse(warehouse: MapPoint, options?: RunCompa
     const body = buildSmartComparisonBody(
       whId,
       smelterIds,
-      categoryIds,
-      totalTons,
+      tonsByCategory,
       comparisonType.value,
     )
     const raw = await postTlGetComparison(body)
@@ -3359,10 +3375,15 @@ async function loadCategories() {
   categoriesLoading.value = true
   try {
     const apiRows = await fetchTlCategories()
+    const apiNameById = new Map<number, string>()
+    for (const row of apiRows) {
+      const name = pickCategoryDisplayName(row.name)
+      if (name) apiNameById.set(row.id, name)
+    }
     const apiIds = new Set(apiRows.map((c) => c.id))
     categories.value = EMAP_FIXED_CATEGORY_ORDER.filter((def) => apiIds.has(def.id)).map((def) => ({
       id: def.id,
-      name: def.name,
+      name: apiNameById.get(def.id) || def.name,
     }))
     ensureCategoryPrefsForList(categories.value)
   } catch (e) {
@@ -4203,7 +4224,7 @@ onBeforeUnmount(() => {
   left: 12px;
   z-index: 1000;
   width: min(720px, calc(100% - 24px));
-  max-height: calc(100% - 24px);
+  max-height: min(70vh, calc(100% - 132px));
   background: rgba(6, 18, 40, 0.92);
   border: 1px solid rgba(34, 211, 238, 0.3);
   backdrop-filter: blur(14px);

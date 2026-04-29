@@ -317,6 +317,27 @@
     </style>
     <script>
       ;(() => {
+        // 线上/线下统一：历史代码若仍请求 /t1/*，自动改写为 /tl/*
+        const rawFetch = window.fetch ? window.fetch.bind(window) : null
+        if (rawFetch) {
+          window.fetch = function (input, init) {
+            let url = ''
+            if (typeof input === 'string') url = input
+            else if (input && typeof input.url === 'string') url = input.url
+            if (url && /\/t1\//.test(url)) {
+              const nextUrl = url.replace('/t1/', '/tl/')
+              if (typeof input === 'string') return rawFetch(nextUrl, init)
+              try {
+                const req = new Request(nextUrl, input)
+                return rawFetch(req, init)
+              } catch (_) {
+                return rawFetch(nextUrl, init)
+              }
+            }
+            return rawFetch(input, init)
+          }
+        }
+
         const state = {
           currentSmelterEditId: null,
           currentWarehouseEditId: null,
@@ -474,7 +495,7 @@
 
         async function setSmelterShipStatus(id, enabled) {
           const body = { 冶炼厂id: id, 循融宝发货: !!enabled }
-          const paths = ['/t1/set_smelter_xunrongbao', '/tl/set_smelter_xunrongbao']
+          const paths = ['/tl/set_smelter_xunrongbao']
           let lastErr = null
           for (const path of paths) {
             try {
